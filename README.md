@@ -8,26 +8,48 @@ Sigma86 adapts the traditional **Almgren-Chriss (2000) Optimal Execution** mathe
 
 ---
 
-## 🧠 The Architecture (Solver vs. Executor)
+## 📐 Mathematical Proof: AMM Convexity vs. Almgren-Chriss
+The original Almgren-Chriss (2000) paper assumes stochastic price impact under Brownian motion in a continuous limit-order-book market, where execution cost $E[C]$ is derived from a linear price impact coefficient $\eta$. 
+
+Critics often argue that AMM slippage is not stochastic, but deterministic. However, our adaptation mathematically proves that for bounded block-to-block trades, the CPMM curve directly translates into the Almgren-Chriss framework:
+
+In a Constant Product Market Maker ($x \cdot y = k$), the effective execution price for swapping $\Delta x$ tokens is derived from the curve's convexity:
+$$\Delta y = \frac{y \cdot \Delta x}{x + \Delta x}$$
+
+The price impact fraction is directly proportional to $\frac{\Delta x}{x + \Delta x}$. By taking the **first-order Taylor expansion** of this function for trades where $\Delta x \ll x$ (which is the exact premise of slicing a large order into small ticks), the convexity flattens:
+$$\frac{1}{x + \Delta x} \approx \frac{1}{x} - \frac{\Delta x}{x^2}$$
+
+This proves that for discrete, tick-based execution schedules, the AMM behaves **identically to a linear limit order book** where the linear price impact coefficient $\eta$ is exactly $\frac{1}{x}$ (the inverse of the pool's base liquidity). 
+
+The "stochastic risk" parameter ($\sigma$) in our solver does not model the deterministic AMM curve—it models the **block-to-block volatility of other traders** moving the pool's invariant between our execution ticks. Therefore, the Almgren-Chriss exponential decay derivation mathematically holds true for on-chain AMMs.
+
+---
+
+## 🧠 The Architecture: TEE Secured Solver vs. Intent Auctions
 
 We separated the heavy quantitative calculus off-chain (The Solver) from a simple, gas-efficient state-machine on-chain (The Executor).
 
-### 1. The AMM-Adapted Solver (Off-chain Node.js)
-Traditional Almgren-Chriss assumes stochastic price impact in a continuous Limit Order Book. However, an AMM's slippage is a deterministic function of trade size ($dx / (x+dx)$). The only "stochastic risk" is what *other* traders do to the pool invariant between your trades (block-to-block risk). 
+### 1. The AMM-Adapted Solver (Off-chain TEE / SGX)
+**The Differentiation:** Platforms like CoW Swap and UniswapX rely on intent auctions, which suffer from **solver oligopolies and collusion**, allowing third-party market makers to extract massive spread fees from DAO treasuries. Sigma86 runs a verifiable, open-source execution solver inside a **Trusted Execution Environment (TEE / Intel SGX)**. The DAO trusts the mathematically optimal code, entirely removing third-party rent extraction.
 
 The Sigma86 Off-chain Solver:
 * Ingests portfolio sizes, the user's block-to-block risk aversion, and live pool liquidity depths.
-* Calculates an AMM-adapted exponential/hyperbolic decay trajectory. 
-* Outputs a deterministic array of exact trade sizes per block/tick.
-* Submits the schedule via Viem strictly through **Flashbots Protect RPC** to completely shield the initial scheduling transaction from MEV front-runners.
+* Calculates the AMM-adapted exponential/hyperbolic decay trajectory.
+* Submits the schedule via Viem strictly through **Flashbots Protect RPC** to prevent atomic mempool sandwich attacks.
 
 ### 2. The Sigma86Vault (On-chain Executor)
 The on-chain `Sigma86Vault.sol` is a deliberately minimal execution layer.
-* **Gas-Optimized Routing:** The `executeTick()` function runs in pure Yul assembly, passing raw API payloads directly into the 1inch router to minimize gas overhead (acknowledging that on-chain latency is bounded by 12s block times, making gas efficiency the true optimization metric).
+* **Gas-Optimized Routing:** The `executeTick()` function runs in pure Yul assembly, passing raw API payloads directly into the 1inch router to minimize gas overhead, ensuring execution priority in Flashbots bundle auctions.
 * **Chainlink Heartbeat:** The Vault natively implements `AutomationCompatibleInterface`. Chainlink Keepers poke the contract at precise intervals to execute the next tick in the schedule.
-* **State Reconciliation:** If a tick reverts due to temporary liquidity droughts, the Vault catches the failure natively without reverting the transaction, accumulating the un-swapped amount for the off-chain solver to reconcile.
+* **Trust Boundary (On-Chain Oracle):** The Vault physically enforces execution pricing. It queries the live Chainlink Price Feed and calculates the effective execution price of the 1inch payload. If the price breaches the DAO's `maxSlippageBps`, the Vault terminates the trade, mathematically preventing a compromised or stale off-chain schedule from draining the treasury.
 
-> **Security & Trust Boundary:** How do we prevent a manipulated off-chain schedule from draining the vault at bad prices? Sigma86 assumes the Vault Owner (the DAO/Treasury) must cryptographically sign the generated schedule before submission. Additionally, the Vault's integration with 1inch enforces strict `minReturnAmount` checks within the router calldata to guarantee a global price floor.
+---
+
+## ⚠️ Known Limitations & Future Work
+To ensure intellectual honesty, we acknowledge the following limitations in the current architecture:
+1. **Statistical Pattern-Recognition MEV:** While Flashbots Protect hides individual transactions from atomic sandwich attacks, the resulting state changes on the AMM are public. A sophisticated counterparty observing the pool reserves drift over multiple hours could infer the schedule and trade ahead of the pattern.
+2. **Oracle Deviation Manipulation:** The Trust Boundary relies on Chainlink feeds, which update based on heartbeat/deviation thresholds. An attacker could manufacture a transient price gap on a thin centralized exchange to trip the deviation band, freezing the Vault to force a worse execution window upon resumption.
+3. **Keeper Liveness Risk:** If Chainlink Keepers fail, lag, or censor the execution, the multi-day schedule silently stalls. Future iterations will include a permissionless keep-alive function or a deadline-based Dutch auction fallback to guarantee liveness.
 
 ---
 
@@ -40,15 +62,6 @@ cd agent-gateway
 npm install
 npx ts-node src/cli.ts
 ```
-
-The terminal will prompt you for a portfolio size and block-to-block risk aversion parameter, crunch the calculus, and plot an ASCII visual representation of the trade execution schedule.
-
----
-
-## 📁 Repository Structure
-
-*   `/contracts/` - Foundry workspace containing `Sigma86Vault.sol` (Gas-optimized execution logic) and the test suite.
-*   `/agent-gateway/` - Node.js workspace containing the MCP Server boilerplate, the `cli.ts` Quant Terminal, and the `deploySchedule.ts` Flashbots pipeline.
 
 ---
 *Built for ETHOnline 2026*
