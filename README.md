@@ -8,40 +8,40 @@ Sigma86 adapts the traditional **Almgren-Chriss (2000) Optimal Execution** mathe
 
 ---
 
-## 📐 Mathematical Proof: AMM Convexity vs. Almgren-Chriss
-The original Almgren-Chriss (2000) paper assumes stochastic price impact under Brownian motion in a continuous limit-order-book market, where execution cost $E[C]$ is derived from a linear price impact coefficient $\eta$. 
+## 📐 Mathematical Proof: Bounding CPMM Convexity for Almgren-Chriss
+The original Almgren-Chriss (2000) paper derives optimal execution assuming a linear price impact coefficient $\eta$. 
+To adapt this for a Constant Product Market Maker ($x \cdot y = k$), we analyze the effective execution price: $\frac{x + \Delta x}{y}$.
 
-Critics often argue that AMM slippage is not stochastic, but deterministic. However, our adaptation mathematically proves that for bounded block-to-block trades, the CPMM curve directly translates into the Almgren-Chriss framework:
+Taking the Taylor expansion of the price impact fractional term:
+$$\frac{1}{x + \Delta x} = \frac{1}{x} - \frac{\Delta x}{x^2} + \frac{(\Delta x)^2}{x^3} - \mathcal{O}((\Delta x)^3)$$
 
-In a Constant Product Market Maker ($x \cdot y = k$), the effective execution price for swapping $\Delta x$ tokens is derived from the curve's convexity:
-$$\Delta y = \frac{y \cdot \Delta x}{x + \Delta x}$$
+For infinitesimal trades, the quadratic and higher-order terms vanish, leaving a linear limit-order-book equivalent where $\eta = \frac{1}{x}$. However, for massive treasury unwinds, these non-linear terms cause significant convexity error. 
 
-The price impact fraction is directly proportional to $\frac{\Delta x}{x + \Delta x}$. By taking the **first-order Taylor expansion** of this function for trades where $\Delta x \ll x$ (which is the exact premise of slicing a large order into small ticks), the convexity flattens:
-$$\frac{1}{x + \Delta x} \approx \frac{1}{x} - \frac{\Delta x}{x^2}$$
+**The Bounding Constraint:**
+To ensure the Almgren-Chriss trajectory remains mathematically optimal on an AMM, the solver must dynamically bound the discrete slice size (tick size) $v_i$. The quadratic error term must remain below the DAO's accepted slippage tolerance $\epsilon$:
+$$\frac{v_i^2}{x^3} < \epsilon \implies v_i < x \sqrt{\epsilon \cdot x}$$
 
-This proves that for discrete, tick-based execution schedules, the AMM behaves **identically to a linear limit order book** where the linear price impact coefficient $\eta$ is exactly $\frac{1}{x}$ (the inverse of the pool's base liquidity). 
-
-The "stochastic risk" parameter ($\sigma$) in our solver does not model the deterministic AMM curve—it models the **block-to-block volatility of other traders** moving the pool's invariant between our execution ticks. Therefore, the Almgren-Chriss exponential decay derivation mathematically holds true for on-chain AMMs.
+The Sigma86 solver restricts execution block-sizes to satisfy this exact bound, ensuring the linear approximation of the CPMM curve holds true throughout the multi-day schedule. The stochastic risk parameter ($\sigma$) models the block-to-block volatility of the pool invariant caused by external traders.
 
 ---
 
-## 🧠 The Architecture: TEE Secured Solver vs. Intent Auctions
+## 🧠 The Architecture: Algorithmic Time-Decay vs Intent Auctions
 
 We separated the heavy quantitative calculus off-chain (The Solver) from a simple, gas-efficient state-machine on-chain (The Executor).
 
-### 1. The AMM-Adapted Solver (Off-chain TEE / SGX)
-**The Differentiation:** Platforms like CoW Swap and UniswapX rely on intent auctions, which suffer from **solver oligopolies and collusion**, allowing third-party market makers to extract massive spread fees from DAO treasuries. Sigma86 runs a verifiable, open-source execution solver inside a **Trusted Execution Environment (TEE / Intel SGX)**. The DAO trusts the mathematically optimal code, entirely removing third-party rent extraction.
+### 1. The AMM-Adapted Solver (Off-chain Node.js)
+**The Differentiation:** Protocols like CoW Swap and UniswapX are incredibly effective at finding best-price execution for *instantaneous batch clearing* across fragmented liquidity. However, for a DAO attempting a multi-day treasury unwind, they must either manually submit hundreds of discrete intents over time, or rely on naive TWAP order types. Sigma86 provides **dynamic algorithmic time-decay**. The DAO runs its own solver infrastructure to continuously calculate a mathematically optimal execution curve that dynamically adjusts to live pool liquidity and volatility, dispatching slices block-by-block.
 
 The Sigma86 Off-chain Solver:
 * Ingests portfolio sizes, the user's block-to-block risk aversion, and live pool liquidity depths.
-* Calculates the AMM-adapted exponential/hyperbolic decay trajectory.
+* Calculates the AMM-adapted exponential/hyperbolic decay trajectory, bounding slice sizes to the CPMM convexity constraint.
 * Submits the schedule via Viem strictly through **Flashbots Protect RPC** to prevent atomic mempool sandwich attacks.
 
 ### 2. The Sigma86Vault (On-chain Executor)
 The on-chain `Sigma86Vault.sol` is a deliberately minimal execution layer.
 * **Gas-Optimized Routing:** The `executeTick()` function runs in pure Yul assembly, passing raw API payloads directly into the 1inch router to minimize gas overhead, ensuring execution priority in Flashbots bundle auctions.
 * **Chainlink Heartbeat:** The Vault natively implements `AutomationCompatibleInterface`. Chainlink Keepers poke the contract at precise intervals to execute the next tick in the schedule.
-* **Trust Boundary (On-Chain Oracle):** The Vault physically enforces execution pricing. It queries the live Chainlink Price Feed and calculates the effective execution price of the 1inch payload. If the price breaches the DAO's `maxSlippageBps`, the Vault terminates the trade, mathematically preventing a compromised or stale off-chain schedule from draining the treasury.
+* **Trust Boundary (On-Chain Oracle):** The Vault physically enforces execution pricing. It queries the live Chainlink Price Feed and calculates the effective execution price of the 1inch payload. If the price breaches the DAO's `maxSlippageBps`, the Vault terminates the trade. **Note:** This stops the Vault from accepting a bad fill, but it does not prevent a malicious or compromised off-chain solver from griefing the execution (e.g., stalling, or intentionally executing at the worst allowable edge of the tolerance band).
 
 ---
 
@@ -49,7 +49,8 @@ The on-chain `Sigma86Vault.sol` is a deliberately minimal execution layer.
 To ensure intellectual honesty, we acknowledge the following limitations in the current architecture:
 1. **Statistical Pattern-Recognition MEV:** While Flashbots Protect hides individual transactions from atomic sandwich attacks, the resulting state changes on the AMM are public. A sophisticated counterparty observing the pool reserves drift over multiple hours could infer the schedule and trade ahead of the pattern.
 2. **Oracle Deviation Manipulation:** The Trust Boundary relies on Chainlink feeds, which update based on heartbeat/deviation thresholds. An attacker could manufacture a transient price gap on a thin centralized exchange to trip the deviation band, freezing the Vault to force a worse execution window upon resumption.
-3. **Keeper Liveness Risk:** If Chainlink Keepers fail, lag, or censor the execution, the multi-day schedule silently stalls. Future iterations will include a permissionless keep-alive function or a deadline-based Dutch auction fallback to guarantee liveness.
+3. **Solver Griefing / Liveness Risk:** While the on-chain oracle prevents bad fills, a compromised off-chain solver can still harm the DAO by refusing to submit schedules (stalling), or leaking the schedule to a colluding searcher before submission. 
+4. **Keeper Liveness Risk:** If Chainlink Keepers fail, lag, or censor the execution, the multi-day schedule silently stalls. Future iterations will include a permissionless keep-alive function or a deadline-based Dutch auction fallback to guarantee liveness.
 
 ---
 
