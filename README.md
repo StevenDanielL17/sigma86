@@ -1,32 +1,39 @@
-# Sigma86 
+# Sigma86: Deterministic AMM Execution Solver
 
-**An institutional-grade, hyper-latency liquidation vault built on 1inch SwapVM and Chainlink.**
+**An institutional-grade liquidation solver built for Constant Product Market Makers (CPMMs) and Flashbots.**
 
-Sigma86 executes massive token unwinds using the **Almgren-Chriss (2000) Optimal Execution** mathematical frontier. It minimizes market impact (slippage) and completely eliminates MEV front-running by replacing predictable linear TWAP with volatility-adjusted hyperbolic execution curves.
+Unlike traditional intent-based auctions (CoW Swap, UniswapX, 1inch Fusion) where DAOs pay spread fees to third-party solvers to find liquidity, Sigma86 allows a treasury to **deterministically self-execute their own mathematically optimal, multi-day unwind schedule**.
+
+Sigma86 adapts the traditional **Almgren-Chriss (2000) Optimal Execution** mathematical frontier to the unique mechanics of on-chain AMMs. 
 
 ---
 
-## 🧠 The Architecture (Brain vs. Brawn)
+## 🧠 The Architecture (Solver vs. Executor)
 
-We separated the heavy quantitative calculus from the on-chain execution to bypass EVM gas limitations.
+We separated the heavy quantitative calculus off-chain (The Solver) from a simple, gas-efficient state-machine on-chain (The Executor).
 
-### 1. The Brain (Bazantic Agent / Node.js)
-The off-chain Bazantic MCP Agent acts as the Quant Sandbox. 
-* It ingests live portfolio sizes, risk aversion parameters, and real-time Chainlink volatility data.
-* It calculates the exact **hyperbolic sine (`sinh`) trajectory** adjusted for CPMM convex slippage (`dx / (x+dx)`).
-* The resulting schedule array is dispatched directly to the Vault via MEV-Share / Flashbots RPC using a hyper-optimized Viem pipeline (`deploySchedule.ts`).
+### 1. The AMM-Adapted Solver (Off-chain Node.js)
+Traditional Almgren-Chriss assumes stochastic price impact in a continuous Limit Order Book. However, an AMM's slippage is a deterministic function of trade size ($dx / (x+dx)$). The only "stochastic risk" is what *other* traders do to the pool invariant between your trades (block-to-block risk). 
 
-### 2. The Brawn (SwapVM + Chainlink Automation)
-The on-chain `Sigma86Vault.sol` is a ruthless state machine.
-* **Hyper-Latency Yul:** We ripped out the standard Solidity ABI encoder. The `executeTick()` function runs in pure Yul assembly, passing raw API payloads directly into the 1inch router for absolute minimum gas and latency.
+The Sigma86 Off-chain Solver:
+* Ingests portfolio sizes, the user's block-to-block risk aversion, and live pool liquidity depths.
+* Calculates an AMM-adapted exponential/hyperbolic decay trajectory. 
+* Outputs a deterministic array of exact trade sizes per block/tick.
+* Submits the schedule via Viem strictly through **Flashbots Protect RPC** to completely shield the initial scheduling transaction from MEV front-runners.
+
+### 2. The Sigma86Vault (On-chain Executor)
+The on-chain `Sigma86Vault.sol` is a deliberately minimal execution layer.
+* **Gas-Optimized Routing:** The `executeTick()` function runs in pure Yul assembly, passing raw API payloads directly into the 1inch router to minimize gas overhead (acknowledging that on-chain latency is bounded by 12s block times, making gas efficiency the true optimization metric).
 * **Chainlink Heartbeat:** The Vault natively implements `AutomationCompatibleInterface`. Chainlink Keepers poke the contract at precise intervals to execute the next tick in the schedule.
-* **State Reconciliation:** If a tick reverts due to temporary liquidity droughts, the Vault catches the failure natively without reverting the transaction, accumulating the un-swapped amount for the off-chain Agent to recalculate.
+* **State Reconciliation:** If a tick reverts due to temporary liquidity droughts, the Vault catches the failure natively without reverting the transaction, accumulating the un-swapped amount for the off-chain solver to reconcile.
+
+> **Security & Trust Boundary:** How do we prevent a manipulated off-chain schedule from draining the vault at bad prices? Sigma86 assumes the Vault Owner (the DAO/Treasury) must cryptographically sign the generated schedule before submission. Additionally, the Vault's integration with 1inch enforces strict `minReturnAmount` checks within the router calldata to guarantee a global price floor.
 
 ---
 
 ## 🚀 Quick Start: The Quant Terminal
 
-Want to see the math in action? Run the CLI Quant Terminal to generate an Almgren-Chriss execution curve in your terminal.
+Run the CLI Quant Terminal to generate an AMM-adapted execution curve locally:
 
 ```bash
 cd agent-gateway
@@ -34,15 +41,14 @@ npm install
 npx ts-node src/cli.ts
 ```
 
-The terminal will prompt you for a portfolio size and risk aversion parameter, crunch the calculus, and plot an ASCII visual representation of the trade execution schedule.
+The terminal will prompt you for a portfolio size and block-to-block risk aversion parameter, crunch the calculus, and plot an ASCII visual representation of the trade execution schedule.
 
 ---
 
 ## 📁 Repository Structure
 
-*   `/contracts/` - Foundry workspace containing `Sigma86Vault.sol` (Pure Yul execution logic) and the test suite.
-*   `/agent-gateway/` - Node.js workspace containing the Bazantic MCP Server, the `cli.ts` Quant Terminal, and the `deploySchedule.ts` Viem pipeline.
-*   `/documents/` - Red-Team architectural teardowns and quant math theory.
+*   `/contracts/` - Foundry workspace containing `Sigma86Vault.sol` (Gas-optimized execution logic) and the test suite.
+*   `/agent-gateway/` - Node.js workspace containing the MCP Server boilerplate, the `cli.ts` Quant Terminal, and the `deploySchedule.ts` Flashbots pipeline.
 
 ---
 *Built for ETHOnline 2026*
