@@ -14,8 +14,12 @@
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@types/node": "^26.4.1",
+    "asciichart": "^1.5.25",
     "typescript": "^7.0.2",
     "viem": "^2.56.3"
+  },
+  "devDependencies": {
+    "@types/asciichart": "^1.5.8",
+    "@types/node": "^26.4.1"
   }
 }
