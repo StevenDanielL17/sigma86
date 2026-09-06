@@ -11,21 +11,42 @@ contract MockOneInchRouter {
         shouldFail = _shouldFail;
     }
 
-    function swap(
-        address caller,
-        address desc,
-        bytes calldata data
-    ) external payable returns (uint256 returnAmount, uint256 spentAmount) {
+    // Since the Vault uses assembly `call`, we mock a generic fallback or specific swap selector
+    fallback() external payable {
         if (shouldFail) {
             revert("Mock swap failed");
         }
-        return (100, 100);
+        // Return 100 as the returnAmount (32 bytes) and 100 as spentAmount (32 bytes)
+        assembly {
+            mstore(0x00, 100)
+            mstore(0x20, 100)
+            return(0x00, 0x40)
+        }
+    }
+}
+
+contract MockChainlinkOracle {
+    int256 public answer = 100000000; // e.g. $1.00 with 8 decimals
+
+    function setAnswer(int256 _answer) external {
+        answer = _answer;
+    }
+
+    function latestRoundData() external view returns (
+        uint80 roundId,
+        int256 _answer,
+        uint256 startedAt,
+        uint256 updatedAt,
+        uint80 answeredInRound
+    ) {
+        return (1, answer, 0, 0, 1);
     }
 }
 
 contract Sigma86VaultTest is Test {
     Sigma86Vault vault;
     MockOneInchRouter router;
+    MockChainlinkOracle oracle;
     address owner = address(1);
     address upkeepAgent = address(2);
 
@@ -33,10 +54,11 @@ contract Sigma86VaultTest is Test {
     event SwapFailed(uint256 tickIndex, uint256 amount, bytes reason);
 
     function setUp() public {
-        vm.prank(owner);
+        vm.startPrank(owner);
         router = new MockOneInchRouter();
-        vm.prank(owner);
-        vault = new Sigma86Vault(upkeepAgent, address(router));
+        oracle = new MockChainlinkOracle();
+        vault = new Sigma86Vault(upkeepAgent, address(router), address(oracle), 100);
+        vm.stopPrank();
     }
 
     function testStartSchedule() public {

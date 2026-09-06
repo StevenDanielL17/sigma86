@@ -17,6 +17,16 @@ interface AutomationCompatibleInterface {
     function performUpkeep(bytes calldata performData) external;
 }
 
+interface AggregatorV3Interface {
+    function latestRoundData() external view returns (
+        uint80 roundId,
+        int256 answer,
+        uint256 startedAt,
+        uint256 updatedAt,
+        uint80 answeredInRound
+    );
+}
+
 contract Sigma86Vault is AutomationCompatibleInterface {
     enum State { IDLE, ACTIVE, PAUSED }
     State public currentState;
@@ -28,6 +38,10 @@ contract Sigma86Vault is AutomationCompatibleInterface {
     address public owner;
     address public upkeepAgent;
     address public oneInchRouter;
+    
+    // Trust Boundary Parameters
+    address public priceFeed;
+    uint256 public maxSlippageBps;
 
     event TickExecuted(uint256 tickIndex, uint256 amount);
     event SwapFailed(uint256 tickIndex, uint256 amount, bytes reason);
@@ -49,10 +63,12 @@ contract Sigma86Vault is AutomationCompatibleInterface {
         _;
     }
 
-    constructor(address _upkeepAgent, address _oneInchRouter) {
+    constructor(address _upkeepAgent, address _oneInchRouter, address _priceFeed, uint256 _maxSlippageBps) {
         owner = msg.sender;
         upkeepAgent = _upkeepAgent;
         oneInchRouter = _oneInchRouter;
+        priceFeed = _priceFeed;
+        maxSlippageBps = _maxSlippageBps;
         currentState = State.IDLE;
     }
 
@@ -97,6 +113,7 @@ contract Sigma86Vault is AutomationCompatibleInterface {
         uint256 amountToSwap = tradeSizes[currentTick];
         address router = oneInchRouter;
         bool success;
+        uint256 returnAmount;
         
         // HYPER-LATENCY EXECUTION CORE
         // Bypassing Solidity's ABI encoder and try/catch memory overhead
@@ -104,16 +121,35 @@ contract Sigma86Vault is AutomationCompatibleInterface {
             let ptr := mload(0x40)
             calldatacopy(ptr, swapData.offset, swapData.length)
             
-            // Raw call to 1inch router. 
-            // 0 retSize prevents allocating memory for return data we don't need (gas savings).
-            success := call(gas(), router, 0, ptr, swapData.length, 0, 0)
+            // Call 1inch router and write the first 32 bytes of return data (returnAmount) to memory 0x00
+            success := call(gas(), router, 0, ptr, swapData.length, 0x00, 0x20)
+            if success {
+                returnAmount := mload(0x00)
+            }
+        }
+        
+        // ON-CHAIN TRUST BOUNDARY: Oracle Slippage Verification
+        if (success) {
+            (, int256 oraclePrice, , , ) = AggregatorV3Interface(priceFeed).latestRoundData();
+            require(oraclePrice > 0, "Invalid oracle price");
+            
+            // Assuming token decimals match, Oracle usually returns 8 decimals for USD pairs
+            // Expected return = (amountToSwap * uint256(oraclePrice)) / 1e8
+            uint256 expectedReturn = (amountToSwap * uint256(oraclePrice)) / 1e8;
+            uint256 minReturn = (expectedReturn * (10000 - maxSlippageBps)) / 10000;
+            
+            if (returnAmount < minReturn) {
+                // The off-chain solver's payload resulted in terrible slippage.
+                // Intentional failure to prevent vault drain.
+                success = false; 
+            }
         }
         
         if (success) {
             emit TickExecuted(currentTick, amountToSwap);
         } else {
             failedAmount += amountToSwap;
-            emit SwapFailed(currentTick, amountToSwap, "");
+            emit SwapFailed(currentTick, amountToSwap, "Slippage tolerance exceeded or call failed");
         }
         
         currentTick++;

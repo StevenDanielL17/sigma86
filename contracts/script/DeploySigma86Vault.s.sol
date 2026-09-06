@@ -14,9 +14,11 @@ contract DeploySigma86Vault is Script {
         // Dummy addresses for Testnet integration
         address upkeepAgent = 0x02777053d6764996e594c3E88AF1D58D5363a2e6; // Chainlink Automation Registry mock
         address oneInchRouter = 0x1111111254EEB25477B68fb85Ed929f73A960582; // 1inch v5 Router
+        address priceFeed = 0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612; // Arbitrum Sepolia ETH/USD mock
+        uint256 maxSlippageBps = 100; // 1%
 
         // Deploy the Vault
-        Sigma86Vault vault = new Sigma86Vault(upkeepAgent, oneInchRouter);
+        Sigma86Vault vault = new Sigma86Vault(upkeepAgent, oneInchRouter, priceFeed, maxSlippageBps);
 
         console.log("Sigma86Vault deployed to:", address(vault));
 
