@@ -12,7 +12,12 @@ interface IOneInchRouter {
     ) external payable returns (uint256 returnAmount, uint256 spentAmount);
 }
 
-contract Sigma86Vault {
+interface AutomationCompatibleInterface {
+    function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData);
+    function performUpkeep(bytes calldata performData) external;
+}
+
+contract Sigma86Vault is AutomationCompatibleInterface {
     enum State { IDLE, ACTIVE, PAUSED }
     State public currentState;
 
@@ -72,30 +77,43 @@ contract Sigma86Vault {
         emit ScheduleAborted();
     }
 
+    function checkUpkeep(bytes calldata checkData) external view override returns (bool upkeepNeeded, bytes memory performData) {
+        upkeepNeeded = (currentState == State.ACTIVE && currentTick < tradeSizes.length);
+        performData = checkData;
+    }
+
+    function performUpkeep(bytes calldata performData) external override onlyUpkeepAgent {
+        executeTick(performData);
+    }
+
     /**
      * @notice Triggered by Chainlink Upkeep to execute the next trade in the schedule
-     * @param swapData The 1inch swap data to execute
+     * @param swapData The raw transaction payload from the 1inch API (includes selector)
      */
-    function executeTick(bytes calldata swapData) external onlyUpkeepAgent inState(State.ACTIVE) {
+    function executeTick(bytes calldata swapData) public inState(State.ACTIVE) {
+        require(msg.sender == upkeepAgent || msg.sender == address(this), "Not authorized");
         require(currentTick < tradeSizes.length, "Schedule completed");
         
         uint256 amountToSwap = tradeSizes[currentTick];
+        address router = oneInchRouter;
+        bool success;
         
-        // Low-level external call to the 1inch router
-        // Since we are doing a low-level call, we use a simple boolean check instead of try/catch
-        // However, if we must use try/catch block for structural reasons with an interface:
-        // try IOneInchRouter(oneInchRouter).swap(address(this), address(0), swapData)
-        // Wait, the instructions ask for "low-level external call logic" and "try/catch state reconciliation".
-        
-        (bool success, bytes memory reason) = oneInchRouter.call(swapData);
+        // HYPER-LATENCY EXECUTION CORE
+        // Bypassing Solidity's ABI encoder and try/catch memory overhead
+        assembly {
+            let ptr := mload(0x40)
+            calldatacopy(ptr, swapData.offset, swapData.length)
+            
+            // Raw call to 1inch router. 
+            // 0 retSize prevents allocating memory for return data we don't need (gas savings).
+            success := call(gas(), router, 0, ptr, swapData.length, 0, 0)
+        }
         
         if (success) {
             emit TickExecuted(currentTick, amountToSwap);
         } else {
-            // Reconcile the failed amount by pushing it to the next tick, or just accumulating it
-            // We'll accumulate it so it can be handled or withdrawn later
             failedAmount += amountToSwap;
-            emit SwapFailed(currentTick, amountToSwap, reason);
+            emit SwapFailed(currentTick, amountToSwap, "");
         }
         
         currentTick++;
