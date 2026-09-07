@@ -56,23 +56,28 @@ To ensure intellectual honesty, we acknowledge the following limitations in the 
 
 ## 🚀 Quick Start: The Quant Terminal & Empirical Backtest
 
-To run the local empirical backtest proving Sigma86's financial outperformance over TWAP:
+To run the local empirical backtest proving Sigma86's financial execution profiles:
 ```bash
 cd agent-gateway
 npm install
 npx ts-node src/backtest.ts
 ```
 
-**Demo Backtest Result:**
-In a simulated 50-hour unwind of 100,000 tokens during a 20% market drawdown, the standard TWAP strategy suffers massive time-decay risk, realizing $830,323. By continuously bounding slippage and intelligently front-loading execution, **Sigma86 realizes $909,090 (+9.49% outperformance).**
+**Demo Backtest Result (Net of Gas & Fees):**
+We simulate a 50-hour unwind of 100,000 tokens across three distinct stochastic price paths:
+1. **Market Crash (-20% trend):** Sigma86 dynamically front-loads the sell-off, avoiding catastrophic time-decay risk and netting **+$62,600** outperformance over TWAP.
+2. **Market Rally (+20% trend):** Sigma86 underperforms TWAP. This represents the Almgren-Chriss "insurance premium" (lost upside) paid to secure liquidity early and reduce variance.
+3. **High-Volatility Chop (0% trend):** Sigma86 underperforms slightly, strictly bounding downside risk at the cost of expected value.
+
+*For a DAO treasury, eliminating downside volatility is vastly superior to gambling on upside price action. Sigma86 mathematically bounds the worst-case scenario.*
 
 ---
 
 ## 🏗️ Core Architectural Specs (Demo Day Context)
 * **Chain Context:** Mainnet Ethereum (Flashbots Protect RPC is entirely mainnet-oriented. Testnet deployments are purely for contract verification, as MEV protection is meaningless on testnets).
-* **Custody & Concurrency:** Sigma86 does *not* pool funds. It operates as a **single-unwind proxy deployment**. A DAO deploys a fresh Vault proxy per execution schedule, eliminating co-mingling risk and complex per-user accounting.
-* **Cancellation Flow:** A DAO can call `abortSchedule()` at any point mid-execution, freezing the Vault and allowing the immediate withdrawal of remaining funds.
-* **Business/Fee Model:** Sigma86 monetizes via a **10 bps (0.1%) success fee** deducted from the realized USDC output at the end of the unwind schedule.
+* **Custody & Concurrency:** Sigma86 does *not* pool funds. It operates as a **single-unwind proxy deployment**. A DAO deploys a fresh Vault proxy per schedule, completely eliminating co-mingling risk and complex ERC-4626 accounting.
+* **Cancellation Flow & Admin Key:** A DAO's existing **Gnosis Safe / Multisig** holds the Vault admin privileges. The multisig can call `abortSchedule()` at any point mid-execution, freezing the Vault and allowing the immediate withdrawal of remaining funds back to the treasury.
+* **Business/Fee Model:** Sigma86 monetizes via an incentive-aligned **Performance Fee (20% of outperformance vs TWAP)**. If Sigma86 does not mathematically beat the TWAP baseline benchmark in realized USDC, the protocol takes 0 fees.
 
 ---
 *Built for ETHOnline 2026*
