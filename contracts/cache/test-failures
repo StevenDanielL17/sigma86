@@ -1,0 +1,1 @@
+{"version":1,"failures":[{"contract":"test/Sigma86Integration.t.sol:Sigma86IntegrationTest","test":"testFullPipelineStartToCompletion"},{"contract":"test/Sigma86Integration.t.sol:Sigma86IntegrationTest","test":"testOracleRejectsMidSchedule"}]}
