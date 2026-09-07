@@ -1,4 +1,4 @@
-import * as asciichart from 'asciichart';
+// Monte Carlo Backtest — no chart import needed
 
 class AMMSimulator {
     public k: number;
@@ -87,7 +87,9 @@ const totalTokens = 100000;
 const ticks = 50;
 const gasCostPerTickUSDC = 2.50; 
 
-// λ is calibrated strictly from a DAO Value-at-Risk (VaR) input, not parameter shopping.
+// λ is a hardcoded constant (1.5e-8) chosen to spread the hyperbolic decay curve
+// across the full 50-tick execution window. VaR-based dynamic calibration is future work.
+// Formula for future implementation: λ = (VaRTarget²) / (portfolioSize² × σ² × T)
 const twapSchedule = calculateAlmgrenChriss(totalTokens, 1e-12, 1000000, ticks, 0.05); 
 const acSchedule = calculateAlmgrenChriss(totalTokens, 1.5e-8, 1000000, ticks, 0.5);   
 
@@ -110,7 +112,7 @@ function runMonteCarlo(name: string, drift: number, vol: number, paths: number) 
     // Variance calculation
     let deltaVariance = 0;
     for(let i=0; i<paths; i++) {
-        deltaVariance += Math.pow(deltas[i] - meanDelta, 2);
+        deltaVariance += Math.pow((deltas[i] ?? 0) - meanDelta, 2);
     }
     const deltaStdev = Math.sqrt(deltaVariance / paths);
 

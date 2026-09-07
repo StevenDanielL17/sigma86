@@ -133,9 +133,9 @@ contract Sigma86Vault is AutomationCompatibleInterface {
             (, int256 oraclePrice, , , ) = AggregatorV3Interface(priceFeed).latestRoundData();
             require(oraclePrice > 0, "Invalid oracle price");
             
-            // Assuming token decimals match, Oracle usually returns 8 decimals for USD pairs
-            // Expected return = (amountToSwap * uint256(oraclePrice)) / 1e8
-            uint256 expectedReturn = (amountToSwap * uint256(oraclePrice)) / 1e8;
+            // amountToSwap is in 1e18 token units. oraclePrice is in 1e8 (Chainlink USD feeds).
+            // Expected USDC return (6 decimals): (amountToSwap * price) / (1e18 * 1e8 / 1e6) = / 1e20
+            uint256 expectedReturn = (amountToSwap * uint256(oraclePrice)) / 1e20;
             uint256 minReturn = (expectedReturn * (10000 - maxSlippageBps)) / 10000;
             
             if (returnAmount < minReturn) {
@@ -157,5 +157,44 @@ contract Sigma86Vault is AutomationCompatibleInterface {
         if (currentTick >= tradeSizes.length) {
             currentState = State.IDLE;
         }
+    }
+
+    /**
+     * @notice Mid-flight re-optimization checkpoint: allows the off-chain solver to update
+     *         the remaining execution schedule based on realized volatility.
+     * @param _newTradeSizes Updated array of trade sizes from current tick onwards.
+     */
+    function updateSchedule(uint256[] memory _newTradeSizes) external onlyOwner inState(State.ACTIVE) {
+        // Replace remaining ticks with the re-optimized schedule
+        uint256 remaining = tradeSizes.length - currentTick;
+        require(_newTradeSizes.length == remaining, "New schedule must match remaining ticks");
+        for (uint256 i = 0; i < remaining; i++) {
+            tradeSizes[currentTick + i] = _newTradeSizes[i];
+        }
+    }
+
+    /**
+     * @notice Allows owner to withdraw remaining tokens if the schedule is PAUSED.
+     *         This is the critical recovery path after abortSchedule() is called.
+     * @param token The ERC20 token address to withdraw.
+     * @param recipient The address to send remaining funds to.
+     */
+    function withdrawRemaining(address token, address recipient) external onlyOwner inState(State.PAUSED) {
+        // Low-level ERC20 balanceOf + transfer
+        (bool ok, bytes memory bal) = token.staticcall(abi.encodeWithSignature("balanceOf(address)", address(this)));
+        require(ok, "balanceOf failed");
+        uint256 balance = abi.decode(bal, (uint256));
+        if (balance > 0) {
+            (bool sent, ) = token.call(abi.encodeWithSignature("transfer(address,uint256)", recipient, balance));
+            require(sent, "Transfer failed");
+        }
+    }
+
+    /**
+     * @notice Allows the owner to update the upkeep agent address.
+     *         Required in case the Chainlink Keeper registry changes the caller.
+     */
+    function updateUpkeepAgent(address _newAgent) external onlyOwner {
+        upkeepAgent = _newAgent;
     }
 }

@@ -89,13 +89,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         for (let i = 1; i <= timeSteps; i++) {
             const t_prev = i - 1;
             const t_curr = i;
-            const x_prev = portfolioSize * (Math.sinh(kappa * (T - t_prev)) / Math.sinh(kappa * T));
-            const x_curr = portfolioSize * (Math.sinh(kappa * (T - t_curr)) / Math.sinh(kappa * T));
+            let x_prev = 0, x_curr = 0;
+            // Overflow guard: sinh(kappa*T) -> Infinity for large kappa*T, switch to exp decay
+            if (kappa * T > 500) {
+                x_prev = portfolioSize * Math.exp(-kappa * t_prev);
+                x_curr = portfolioSize * Math.exp(-kappa * t_curr);
+            } else {
+                x_prev = portfolioSize * (Math.sinh(kappa * (T - t_prev)) / Math.sinh(kappa * T));
+                x_curr = portfolioSize * (Math.sinh(kappa * (T - t_curr)) / Math.sinh(kappa * T));
+            }
             let tradeSize = x_prev - x_curr;
-            
-            // Adjust for CPMM convex slippage: dx / (x + dx). 
-            // In a real scenario, we might dynamically adjust tradeSize to ensure slippage < threshold,
-            // but for the schedule, we output the mathematically optimal theoretical steps.
             trades.push(tradeSize);
         }
     }

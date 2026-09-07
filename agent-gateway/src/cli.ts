@@ -60,8 +60,7 @@ rl.question('Enter Portfolio Size to Unwind (e.g., 50000): ', (sizeStr: string) 
         const portfolioSize = parseFloat(sizeStr) || 50000;
         const riskAversion = parseFloat(riskStr) || 0.1;
         
-        console.log(`\n[📡] Connecting to Chainlink Data Streams...`);
-        console.log(`[📡] Extracting live volatility and pool depth...`);
+        console.log(`\n[📡] Using simulated pool parameters (poolLiquidity=1M, σ=0.05)...`);
         
         setTimeout(() => {
             console.log(`\nCrunching trajectories for ${portfolioSize} units with risk aversion ${riskAversion}...`);
