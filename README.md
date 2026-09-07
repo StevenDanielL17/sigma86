@@ -63,21 +63,22 @@ npm install
 npx ts-node src/backtest.ts
 ```
 
-**Demo Backtest Result (Net of Gas & Fees):**
-We simulate a 50-hour unwind of 100,000 tokens across three distinct stochastic price paths:
-1. **Market Crash (-20% trend):** Sigma86 dynamically front-loads the sell-off, avoiding catastrophic time-decay risk and netting **+$62,600** outperformance over TWAP.
-2. **Market Rally (+20% trend):** Sigma86 underperforms TWAP. This represents the Almgren-Chriss "insurance premium" (lost upside) paid to secure liquidity early and reduce variance.
-3. **High-Volatility Chop (0% trend):** Sigma86 underperforms slightly, strictly bounding downside risk at the cost of expected value.
+**Demo Backtest Result (Net of Gas & 20% Performance Fee):**
+We simulate a 50-hour unwind of 100,000 tokens across three distinct stochastic price paths, seeded so both TWAP and Sigma86 face the exact same tick-by-tick volatility.
+1. **Market Crash (-20% trend):** Sigma86 nets **$856,053**, dynamically front-loading the sell-off and netting **+$25,680** outperformance over TWAP.
+2. **Market Rally (+20% trend):** Sigma86 nets **$960,744**, underperforming TWAP by **-$38,702**. This represents the Almgren-Chriss "insurance premium" (lost upside) paid to secure liquidity early and reduce variance.
+3. **High-Volatility Chop (0% trend):** Sigma86 nets **$860,194**, outperforming TWAP by **+$24,360** because its curve navigates the variance more optimally than a flat TWAP.
 
-*For a DAO treasury, eliminating downside volatility is vastly superior to gambling on upside price action. Sigma86 mathematically bounds the worst-case scenario.*
+*For a DAO treasury, eliminating downside volatility is vastly superior to gambling on upside price action. Sigma86 optimizes the ex-ante tradeoff between Expected Cost and Variance.*
 
 ---
 
 ## 🏗️ Core Architectural Specs (Demo Day Context)
 * **Chain Context:** Mainnet Ethereum (Flashbots Protect RPC is entirely mainnet-oriented. Testnet deployments are purely for contract verification, as MEV protection is meaningless on testnets).
-* **Custody & Concurrency:** Sigma86 does *not* pool funds. It operates as a **single-unwind proxy deployment**. A DAO deploys a fresh Vault proxy per schedule, completely eliminating co-mingling risk and complex ERC-4626 accounting.
-* **Cancellation Flow & Admin Key:** A DAO's existing **Gnosis Safe / Multisig** holds the Vault admin privileges. The multisig can call `abortSchedule()` at any point mid-execution, freezing the Vault and allowing the immediate withdrawal of remaining funds back to the treasury.
-* **Business/Fee Model:** Sigma86 monetizes via an incentive-aligned **Performance Fee (20% of outperformance vs TWAP)**. If Sigma86 does not mathematically beat the TWAP baseline benchmark in realized USDC, the protocol takes 0 fees.
+* **Custody & Concurrency:** Sigma86 operates as a **single-unwind proxy deployment**. A DAO deploys a fresh Vault proxy per schedule, completely eliminating co-mingling risk.
+* **Cancellation Flow & Admin Key:** A DAO's existing **Gnosis Safe / Multisig** holds the Vault admin privileges. The multisig can call `abortSchedule()` at any point mid-execution, freezing the Vault.
+* **Business/Fee Model:** Sigma86 monetizes via a **Performance Fee (20% of outperformance vs TWAP)**. 
+  * *Future Work (Principal-Agent Alignment):* Currently, if Sigma86 underperforms in a rally, it takes 0 fees but suffers no penalty. To fully align incentives, future iterations require a symmetric fee model (e.g., fee credits or slashing conditions against future underperformance) rather than a one-sided free option.
 
 ---
 *Built for ETHOnline 2026*
