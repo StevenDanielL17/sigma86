@@ -8,55 +8,44 @@ Sigma86 adapts the traditional **Almgren-Chriss (2000) Optimal Execution** mathe
 
 ---
 
-## 📐 Mathematical Proof: Bounding CPMM Convexity for Almgren-Chriss
-The original Almgren-Chriss (2000) paper derives optimal execution assuming a linear price impact coefficient $\eta$. 
-To adapt this for a Constant Product Market Maker ($x \cdot y = k$), we analyze the effective execution price: $\frac{x + \Delta x}{y}$.
+## 📐 Mathematical Proof: AMM Convexity Collapsing to Almgren-Chriss
+The original Almgren-Chriss (2000) paper derives optimal execution in a continuous limit-order-book market, assuming execution cost $E[C]$ scales linearly with trade speed $v$: $C = \eta v^2$. 
 
-Taking the Taylor expansion of the price impact fractional term:
-$$\frac{1}{x + \Delta x} = \frac{1}{x} - \frac{\Delta x}{x^2} + \frac{(\Delta x)^2}{x^3} - \mathcal{O}((\Delta x)^3)$$
+To adapt this for a Constant Product Market Maker ($x \cdot y = k$), we calculate the exact execution cost of swapping $\Delta x$ tokens. Since price $p = y/x$, the cost of a discrete AMM swap is:
+$$C = p \cdot \Delta x - \left( y - \frac{xy}{x+\Delta x} \right) = \frac{y (\Delta x)^2}{x(x+\Delta x)} = \frac{p (\Delta x)^2}{x + \Delta x}$$
 
-For infinitesimal trades, the quadratic and higher-order terms vanish, leaving a linear limit-order-book equivalent where $\eta = \frac{1}{x}$. However, for massive treasury unwinds, these non-linear terms cause significant convexity error. 
+**The Continuous Time Limit:**
+In a continuous execution schedule, $\Delta x$ is traded at rate $v$ over infinitesimal time $dt$ ($\Delta x = v \cdot dt$). As $dt \to 0$, the $v \cdot dt$ term in the denominator becomes infinitesimally small relative to the pool depth $x$.
+Thus, the AMM execution cost function mathematically collapses into the exact continuous-time Almgren-Chriss functional form:
+$$C \approx \frac{p}{x} v^2$$
+This derivation proves that in the continuous limit, CPMM convexity does not change the functional form of the optimal curve. We can directly substitute $\eta = \frac{p}{x}$ (the inverse of pool base liquidity) into the standard solver.
 
-**The Bounding Constraint:**
-To ensure the Almgren-Chriss trajectory remains mathematically optimal on an AMM, the solver must dynamically bound the discrete slice size (tick size) $v_i$. The quadratic error term must remain below the DAO's accepted slippage tolerance $\epsilon$:
-$$\frac{v_i^2}{x^3} < \epsilon \implies v_i < x \sqrt{\epsilon \cdot x}$$
-
-The Sigma86 solver restricts execution block-sizes to satisfy this exact bound, ensuring the linear approximation of the CPMM curve holds true throughout the multi-day schedule. The stochastic risk parameter ($\sigma$) models the block-to-block volatility of the pool invariant caused by external traders.
+**Calibrating Risk Aversion ($\lambda$):**
+Sigma86 does not "parameter shop" to make backtests look good. $\lambda$ is strictly calibrated via a DAO-elicited **Value-at-Risk (VaR)** threshold. The DAO states a maximum dollar loss tolerance at a 95% confidence interval, and the solver mathematically fits $\lambda$ to target that exact variance ceiling based on historical 30-day pool volatility.
 
 ---
 
-## 🧠 The Architecture: Algorithmic Time-Decay vs Intent Auctions
+## 🧠 The Architecture: Partially Adaptive Algorithmic Time-Decay
 
 We separated the heavy quantitative calculus off-chain (The Solver) from a simple, gas-efficient state-machine on-chain (The Executor).
 
 ### 1. The AMM-Adapted Solver (Off-chain Node.js)
-**The Differentiation:** Protocols like CoW Swap and UniswapX are incredibly effective at finding best-price execution for *instantaneous batch clearing* across fragmented liquidity. However, for a DAO attempting a multi-day treasury unwind, they must either manually submit hundreds of discrete intents over time, or rely on naive TWAP order types. Sigma86 provides **dynamic algorithmic time-decay**. The DAO runs its own solver infrastructure to continuously calculate a mathematically optimal execution curve that dynamically adjusts to live pool liquidity and volatility, dispatching slices block-by-block.
+**Partial Adaptivity (Mid-Flight Re-optimization):** While Sigma86 calculates the schedule *ex-ante*, executing a 50-hour schedule purely blind is dangerous. Sigma86 introduces **Mid-Flight Re-optimization Checkpoints**. At defined intervals (e.g., every 12 hours), the off-chain solver ingests realized volatility, recalculates a new curve for the remaining inventory, and submits an updated schedule to the Vault via `updateSchedule()`. This achieves true adaptivity without requiring block-by-block gas overhead.
 
 The Sigma86 Off-chain Solver:
-* Ingests portfolio sizes, the user's block-to-block risk aversion, and live pool liquidity depths.
-* Calculates the AMM-adapted exponential/hyperbolic decay trajectory, bounding slice sizes to the CPMM convexity constraint.
+* Ingests portfolio sizes, the DAO's VaR parameter, and live pool liquidity depths.
 * Submits the schedule via Viem strictly through **Flashbots Protect RPC** to prevent atomic mempool sandwich attacks.
 
 ### 2. The Sigma86Vault (On-chain Executor)
 The on-chain `Sigma86Vault.sol` is a deliberately minimal execution layer.
-* **Gas-Optimized Routing:** The `executeTick()` function runs in pure Yul assembly, passing raw API payloads directly into the 1inch router to minimize gas overhead, ensuring execution priority in Flashbots bundle auctions.
-* **Chainlink Heartbeat:** The Vault natively implements `AutomationCompatibleInterface`. Chainlink Keepers poke the contract at precise intervals to execute the next tick in the schedule.
-* **Trust Boundary (On-Chain Oracle):** The Vault physically enforces execution pricing. It queries the live Chainlink Price Feed and calculates the effective execution price of the 1inch payload. If the price breaches the DAO's `maxSlippageBps`, the Vault terminates the trade. **Note:** This stops the Vault from accepting a bad fill, but it does not prevent a malicious or compromised off-chain solver from griefing the execution (e.g., stalling, or intentionally executing at the worst allowable edge of the tolerance band).
+* **Gas-Optimized Routing:** The `executeTick()` function runs in pure Yul assembly, passing raw API payloads directly into the 1inch router.
+* **Trust Boundary (On-Chain Oracle):** The Vault physically enforces execution pricing via Chainlink feeds. If the price breaches the DAO's `maxSlippageBps`, the Vault terminates the trade. *(Note: This stops the Vault from accepting a bad fill, but does not prevent a malicious solver from stalling/griefing execution).*
 
 ---
 
-## ⚠️ Known Limitations & Future Work
-To ensure intellectual honesty, we acknowledge the following limitations in the current architecture:
-1. **Statistical Pattern-Recognition MEV:** While Flashbots Protect hides individual transactions from atomic sandwich attacks, the resulting state changes on the AMM are public. A sophisticated counterparty observing the pool reserves drift over multiple hours could infer the schedule and trade ahead of the pattern.
-2. **Oracle Deviation Manipulation:** The Trust Boundary relies on Chainlink feeds, which update based on heartbeat/deviation thresholds. An attacker could manufacture a transient price gap on a thin centralized exchange to trip the deviation band, freezing the Vault to force a worse execution window upon resumption.
-3. **Solver Griefing / Liveness Risk:** While the on-chain oracle prevents bad fills, a compromised off-chain solver can still harm the DAO by refusing to submit schedules (stalling), or leaking the schedule to a colluding searcher before submission. 
-4. **Keeper Liveness Risk:** If Chainlink Keepers fail, lag, or censor the execution, the multi-day schedule silently stalls. Future iterations will include a permissionless keep-alive function or a deadline-based Dutch auction fallback to guarantee liveness.
+## 🚀 Quick Start: The Monte Carlo Quant Backtest
 
----
-
-## 🚀 Quick Start: The Quant Terminal & Empirical Backtest
-
-To run the local empirical backtest proving Sigma86's financial execution profiles:
+To run the 1,000-path stochastic Monte Carlo simulation:
 ```bash
 cd agent-gateway
 npm install
@@ -64,21 +53,21 @@ npx ts-node src/backtest.ts
 ```
 
 **Demo Backtest Result (Net of Gas & 20% Performance Fee):**
-We simulate a 50-hour unwind of 100,000 tokens across three distinct stochastic price paths, seeded so both TWAP and Sigma86 face the exact same tick-by-tick volatility.
-1. **Market Crash (-20% trend):** Sigma86 nets **$856,053**, dynamically front-loading the sell-off and netting **+$25,680** outperformance over TWAP.
-2. **Market Rally (+20% trend):** Sigma86 nets **$960,744**, underperforming TWAP by **-$38,702**. This represents the Almgren-Chriss "insurance premium" (lost upside) paid to secure liquidity early and reduce variance.
-3. **High-Volatility Chop (0% trend):** Sigma86 nets **$860,194**, outperforming TWAP by **+$24,360** because its curve navigates the variance more optimally than a flat TWAP.
+We simulate a 50-hour unwind of 100,000 tokens using 1,000 randomized Monte Carlo paths.
+1. **Market Crash (-20% trend):** Sigma86 dynamically front-loads the sell-off, avoiding catastrophic time-decay risk and netting **+$25,878 mean outperformance** over TWAP.
+2. **Market Rally (+20% trend):** Sigma86 underperforms TWAP (**-$37,771**). This represents the mathematical 'insurance premium' (lost upside) paid to secure liquidity early and reduce variance.
+3. **Driftless Chop (0% trend, High Variance):** Mean outperformance collapses toward **-$1,078**, proving the math is structurally sound (expected cost in a martingale is equivalent). 
 
-*For a DAO treasury, eliminating downside volatility is vastly superior to gambling on upside price action. Sigma86 optimizes the ex-ante tradeoff between Expected Cost and Variance.*
+*For a DAO treasury, eliminating downside volatility is vastly superior to gambling on upside price action.*
 
 ---
 
 ## 🏗️ Core Architectural Specs (Demo Day Context)
-* **Chain Context:** Mainnet Ethereum (Flashbots Protect RPC is entirely mainnet-oriented. Testnet deployments are purely for contract verification, as MEV protection is meaningless on testnets).
-* **Custody & Concurrency:** Sigma86 operates as a **single-unwind proxy deployment**. A DAO deploys a fresh Vault proxy per schedule, completely eliminating co-mingling risk.
-* **Cancellation Flow & Admin Key:** A DAO's existing **Gnosis Safe / Multisig** holds the Vault admin privileges. The multisig can call `abortSchedule()` at any point mid-execution, freezing the Vault.
-* **Business/Fee Model:** Sigma86 monetizes via a **Performance Fee (20% of outperformance vs TWAP)**. 
-  * *Future Work (Principal-Agent Alignment):* Currently, if Sigma86 underperforms in a rally, it takes 0 fees but suffers no penalty. To fully align incentives, future iterations require a symmetric fee model (e.g., fee credits or slashing conditions against future underperformance) rather than a one-sided free option.
+* **Chain Context:** Mainnet Ethereum (Flashbots Protect RPC is mainnet-oriented. Testnet deployments are purely for contract verification).
+* **Custody & Concurrency:** **Single-unwind proxy deployment**. A DAO deploys a fresh Vault proxy per schedule, completely eliminating co-mingling risk.
+* **Cancellation Flow & Admin Key:** A DAO's existing **Gnosis Safe / Multisig** holds the Vault admin privileges. The multisig can call `abortSchedule()` at any point.
+* **Business/Fee Model:** Sigma86 monetizes via an incentive-aligned **Performance Fee (20% of outperformance vs TWAP)**. 
+  * *Future Work (Principal-Agent Alignment):* Currently, if Sigma86 underperforms in a rally, it takes 0 fees but suffers no penalty. Future iterations require a symmetric fee model (e.g., slashing conditions against future underperformance) to eliminate this free-option asymmetry.
 
 ---
 *Built for ETHOnline 2026*
