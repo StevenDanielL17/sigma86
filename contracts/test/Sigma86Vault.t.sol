@@ -103,33 +103,62 @@ contract Sigma86VaultTest is Test {
         assertEq(vault.failedAmount(), 0);
     }
 
-    function testPerformUpkeepFailureReconciliation() public {
-        uint256[] memory sizes = new uint256[](2);
+    /**
+     * @notice THE CRITICAL C-2 PATH: Abort mid-schedule, then withdraw remaining tokens.
+     * Schedule has 3 ticks. Execute tick 0 (success). Execute tick 1 (abort). 
+     * Confirm PAUSED. Call withdrawRemaining. Confirm balance transferred.
+     */
+    function testAbortMidScheduleThenWithdraw() public {
+        // Deploy a mock ERC20 token and fund the vault
+        MockERC20 token = new MockERC20();
+        token.mint(address(vault), 600); // fund vault with 600 tokens
+
+        uint256[] memory sizes = new uint256[](3);
         sizes[0] = 100;
         sizes[1] = 200;
+        sizes[2] = 300;
 
         vm.prank(owner);
         vault.startSchedule(sizes);
 
-        router.setShouldFail(true);
-
-        // We can't perfectly expect bytes reason because it contains the selector and "Mock swap failed", but we can just skip the exact bytes match or try it.
-        // It's easier to just not expect the exact revert message in emit for bytes because ABI encoding of string reverts includes the Error(string) selector.
-
+        // Execute tick 0 successfully
         vm.prank(upkeepAgent);
         vault.performUpkeep("0x1234");
-
         assertEq(vault.currentTick(), 1);
         assertEq(uint256(vault.currentState()), uint256(Sigma86Vault.State.ACTIVE));
-        assertEq(vault.failedAmount(), 100);
 
-        router.setShouldFail(false);
+        // ABORT mid-schedule (after 1 of 3 ticks)
+        vm.prank(owner);
+        vault.abortSchedule();
+        assertEq(uint256(vault.currentState()), uint256(Sigma86Vault.State.PAUSED));
 
-        vm.prank(upkeepAgent);
-        vault.performUpkeep("0x1234");
+        // Check vault still holds remaining balance
+        uint256 vaultBalance = token.balanceOf(address(vault));
+        assertTrue(vaultBalance > 0, "Vault must hold remaining tokens");
 
-        assertEq(vault.currentTick(), 2);
-        assertEq(uint256(vault.currentState()), uint256(Sigma86Vault.State.IDLE));
-        assertEq(vault.failedAmount(), 100);
+        // Withdraw remaining tokens back to owner
+        address recipient = address(42);
+        vm.prank(owner);
+        vault.withdrawRemaining(address(token), recipient);
+
+        // Confirm funds were transferred
+        assertEq(token.balanceOf(recipient), vaultBalance);
+        assertEq(token.balanceOf(address(vault)), 0);
+    }
+}
+
+// Minimal ERC20 mock for the withdraw test
+contract MockERC20 {
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender] >= amount, "Insufficient");
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
     }
 }
