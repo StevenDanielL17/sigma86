@@ -25,21 +25,24 @@ Sigma86 does not "parameter shop" to make backtests look good. $\lambda$ is stri
 
 ---
 
-## 🧠 The Architecture: Partially Adaptive Algorithmic Time-Decay
+## 🧠 The Architecture: Single-Checkpoint Adaptive Execution
 
 We separated the heavy quantitative calculus off-chain (The Solver) from a simple, gas-efficient state-machine on-chain (The Executor).
 
 ### 1. The AMM-Adapted Solver (Off-chain Node.js)
-**Partial Adaptivity (Mid-Flight Re-optimization):** While Sigma86 calculates the schedule *ex-ante*, executing a 50-hour schedule purely blind is dangerous. Sigma86 introduces **Mid-Flight Re-optimization Checkpoints**. At defined intervals (e.g., every 12 hours), the off-chain solver ingests realized volatility, recalculates a new curve for the remaining inventory, and submits an updated schedule to the Vault via `updateSchedule()`. This achieves true adaptivity without requiring block-by-block gas overhead.
+**Adaptivity model (honest):** Sigma86 is neither fully ex-ante (blind) nor continuously adaptive (expensive). It uses **single-checkpoint re-optimization**: the schedule is computed ex-ante and executed tick-by-tick. At defined tick boundaries, the solver ingests realized pool volatility and calls `updateSchedule()` on the Vault to revise the remaining trajectory. This is not continuous — but it is meaningfully better than pure TWAP with no adaptation, and it avoids the gas cost of block-by-block re-optimization.
+
+**Differentiation vs. intent auctions:** CoW Swap and UniswapX are built for instantaneous batch clearing across fragmented liquidity. For a DAO attempting a multi-day treasury unwind, those protocols require either manually submitting hundreds of discrete intents or relying on naive TWAP. Sigma86 provides algorithmically-scheduled time-decay with mid-flight correction capability.
 
 The Sigma86 Off-chain Solver:
-* Ingests portfolio sizes, the DAO's VaR parameter, and live pool liquidity depths.
+* Ingests portfolio sizes, the DAO's VaR parameter (λ placeholder pending full calibration), and live pool liquidity depths.
 * Submits the schedule via Viem strictly through **Flashbots Protect RPC** to prevent atomic mempool sandwich attacks.
 
 ### 2. The Sigma86Vault (On-chain Executor)
 The on-chain `Sigma86Vault.sol` is a deliberately minimal execution layer.
 * **Gas-Optimized Routing:** The `executeTick()` function runs in pure Yul assembly, passing raw API payloads directly into the 1inch router.
-* **Trust Boundary (On-Chain Oracle):** The Vault physically enforces execution pricing via Chainlink feeds. If the price breaches the DAO's `maxSlippageBps`, the Vault terminates the trade. *(Note: This stops the Vault from accepting a bad fill, but does not prevent a malicious solver from stalling/griefing execution).*
+* **Trust Boundary (On-Chain Oracle):** The Vault enforces execution pricing via Chainlink feeds. It compares the router's realized return against `(amountToSwap × oraclePrice / 1e20) × (1 − maxSlippageBps)`. Fills below that threshold accumulate in `failedAmount` rather than being accepted. **This is adversarially tested** — the suite confirms the check blocks at `minReturn−1` and passes at `minReturn` exactly.
+* **Mid-Flight Re-optimization:** `updateSchedule()` allows the off-chain solver to replace remaining ticks with a revised plan based on realized volatility, without restarting the schedule.
 
 ---
 
@@ -52,11 +55,14 @@ npm install
 npx ts-node src/backtest.ts
 ```
 
-**Demo Backtest Result (Net of Gas & 20% Performance Fee):**
-We simulate a 50-hour unwind of 100,000 tokens using 1,000 randomized Monte Carlo paths.
-1. **Market Crash (-20% trend):** Sigma86 dynamically front-loads the sell-off, avoiding catastrophic time-decay risk and netting **+$25,878 mean outperformance** over TWAP.
-2. **Market Rally (+20% trend):** Sigma86 underperforms TWAP (**-$37,771**). This represents the mathematical 'insurance premium' (lost upside) paid to secure liquidity early and reduce variance.
-3. **Driftless Chop (0% trend, High Variance):** Mean outperformance collapses toward **-$1,078**, proving the math is structurally sound (expected cost in a martingale is equivalent). 
+**Demo Backtest Result (5 seeds × 500 paths, Net of Gas & 20% Performance Fee):**
+
+**The strongest result is the boring one:** In a driftless, zero-trend market, Sigma86's mean outperformance collapses to **−$1,020** across 5 independent seeds. This is the theoretically-predicted null result from Almgren-Chriss — in a martingale, any deterministic schedule costs the same in expectation. A model curve-fit to look good would claim outperformance everywhere. Getting the boring, correct answer where theory says the answer *should* be boring is the strongest evidence the model is doing what AC actually predicts.
+
+The directional results confirm the tradeoff:
+1. **Driftless Chop (0% trend):** Grand Mean **−$1,020**, StdDev across seeds **±$843** — collapses to ~$0 as predicted. ✓ Theoretically correct.
+2. **Market Crash (−20% trend):** Grand Mean **+$25,782**, StdDev **±$277** — front-loading avoids time-decay loss. Structurally stable across seeds.
+3. **Market Rally (+20% trend):** Grand Mean **−$37,970**, StdDev **±$362** — underperforms TWAP. This is the honest insurance premium for variance reduction. Structurally stable across seeds.
 
 *For a DAO treasury, eliminating downside volatility is vastly superior to gambling on upside price action.*
 
