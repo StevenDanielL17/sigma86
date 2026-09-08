@@ -74,6 +74,10 @@ $$\frac{\partial \mathcal{F}}{\partial x} - \frac{d}{dt}\left(\frac{\partial \ma
 $$2 \lambda \sigma^2 x(t) - \frac{d}{dt}\left(2 \eta \dot{x}(t)\right) = 0$$
 $$\ddot{x}(t) - \kappa^2 x(t) = 0, \quad \text{with } \kappa = \sqrt{\frac{\lambda \sigma^2}{\eta}}$$
 
+On discrete Constant Product Market Maker (CPMM) curves where $\eta = y / x^2 = S_0 / x_{\text{reserve}}$ and normalized dimensionless risk aversion $\lambda$ is derived from VaR, the discrete tick decay rate is:
+$$\kappa_{\text{tick}} = \sqrt{\frac{\lambda \cdot S_0 \cdot \sigma_{\text{tick}}^2}{X_0 \cdot \eta}} = \sqrt{\frac{\lambda \cdot x_{\text{reserve}} \cdot \sigma_{\text{tick}}^2}{X_0}}$$
+where $\sigma_{\text{tick}}^2 = \sigma^2 / N$ and $X_0$ is total liquidated inventory.
+
 The general solution to this second-order linear differential equation is:
 $$x(t) = A \cosh(\kappa t) + B \sinh(\kappa t)$$
 
@@ -207,23 +211,27 @@ Sigma86 enforces strict quantitative risk trigger conditions. If market conditio
 ```
 
 ### 3.1 Zero-Memory Yul Assembly Execution Core
-`executeTick()` executes external router swaps using inline Yul assembly:
+`executeTick()` executes external router swaps using inline Yul assembly hardened against uninitialized scratch space:
 ```solidity
 assembly {
     let ptr := mload(0x40)
     calldatacopy(ptr, swapData.offset, swapData.length)
+    mstore(0x00, 0)
     success := call(gas(), router, 0, ptr, swapData.length, 0x00, 0x20)
-    if success {
+    if and(success, iszero(lt(returndatasize(), 32))) {
         returnAmount := mload(0x00)
+    }
+    if and(success, lt(returndatasize(), 32)) {
+        returnAmount := 0
     }
 }
 ```
-This avoids Solidity's ABI-encoder memory expansion, ensuring maximum gas priority in private MEV bundles.
+This avoids Solidity's ABI-encoder memory expansion, ensuring maximum gas priority in private MEV bundles while guaranteeing that silent routers returning `< 32` bytes cannot leak uninitialized scratch space memory.
 
 ### 3.2 Decimal-Normalized Cross-Asset Oracle Verification
 To support arbitrary cross-asset pairs (e.g. WBTC (8 dec), WETH (18 dec), USDC (6 dec)):
 $$\text{ExpectedReturn} = \frac{\text{amountToSwap} \cdot P_{\text{oracle}} \cdot 10^{\text{tokenOutDecimals}}}{10^{\text{tokenInDecimals}} \cdot 10^{\text{feedDecimals}}}$$
-The vault dynamically queries `decimals()` from the Chainlink feed, reverting or rejecting ticks that fall below $(1 - \text{maxSlippageBps}) \cdot \text{ExpectedReturn}$.
+The vault dynamically queries `decimals()` from the Chainlink feed, enforcing round validity (`answeredInRound >= roundId`), configurable maximum staleness delays (`maxOracleDelay`), and decimal overflow guards ($\le 36$), rejecting ticks that fall below $(1 - \text{maxSlippageBps}) \cdot \text{ExpectedReturn}$.
 
 ### 3.3 Multi-Signature & Gnosis Safe Timelock Workflows
 DAOs govern the vault through Gnosis Safe multisigs:
@@ -251,15 +259,15 @@ The Monte Carlo solver benchmark executes **1,000 stochastic paths** (5 random s
 [ 1. MATHEMATICAL CALIBRATION REPORT ]
 Initial Portfolio:         100,000 tokens ($1,000,000 USD)
 DAO VaR Budget (95% CI):   $50,000 USD (5.00% of book)
-Calibrated CVaR (ES):      $62,650.00 USD
-Derived Risk Aversion λ:   4.7933e-7 (Zero arbitrary constants)
+Calibrated CVaR (ES):      $62,500.00 USD
+Derived Risk Aversion λ:   2.3966e+0 (Zero arbitrary constants)
 Formula Applied:           λ = (2 · ln(1/α) · VaR²) / (W₀² · σ² · T)
 
 [ 2. OPTIMAL TRAJECTORY PROPERTIES ]
-TWAP Regime:               linear_twap (κ = 0.000316)
-Sigma86 (AC) Regime:       balanced_almgren_chriss (κ = 0.034617, Half-Life = 20.0 ticks)
-Initial Tick 1 Slice:      3,656.4 tokens (3.66%) vs TWAP 2,000.0 tokens
-Terminal Tick 50 Slice:    631.9 tokens (0.63%)
+TWAP Regime:               linear_twap (κ = 0.000000)
+Sigma86 (AC) Regime:       balanced_almgren_chriss (κ = 0.034616, Half-Life = 20.0 ticks)
+Initial Tick 1 Slice:      3,626.7 tokens (3.63%) vs TWAP 2,000.0 tokens
+Terminal Tick 50 Slice:    1,266.4 tokens (1.27%)
 ```
 
 ### Statistical Performance Summary
@@ -267,17 +275,17 @@ Terminal Tick 50 Slice:    631.9 tokens (0.63%)
 | Metric | Market Crash (-20% Trend) | Market Rally (+20% Trend) | Driftless Martingale (0% Trend) |
 | :--- | :--- | :--- | :--- |
 | **Total Simulated Paths** | 1,000 | 1,000 | 1,000 |
-| **Mean Net Outperformance vs TWAP** | **+$25,783.71** | **-$37,682.20** | **-$1,020.45** |
-| **Standard Deviation ($\sigma_{\Delta}$)** | $\pm \$5,485.84$ | $\pm \$9,125.00$ | $\pm \$14,175.15$ |
-| **Information Ratio (IR)** | **+4.70** | -4.13 | **-0.07 ($\approx 0$)** |
-| **Seed-to-Seed Stability ($\sigma_{\text{meta}}$)** | $\pm \$112.11$ | $\pm \$323.00$ | $\pm \$862.37$ |
-| **TWAP Max Adverse Excursion (MAE)** | 21.4% drawdown | 3.2% drawdown | 8.9% drawdown |
-| **Sigma86 Max Adverse Excursion (MAE)** | **14.8% drawdown** | 3.5% drawdown | 7.6% drawdown |
-| **MAE Risk Reduction** | **+30.8% drawdown avoided** | -0.3% | **+14.6% drawdown avoided** |
+| **Mean Net Outperformance vs TWAP** | **+$12,209.32** | **-$18,058.50** | **-$821.75** |
+| **Standard Deviation ($\sigma_{\Delta}$)** | $\pm \$2,515.26$ | $\pm \$4,248.96$ | $\pm \$7,239.58$ |
+| **Information Ratio (IR)** | **+4.85** | -4.25 | **-0.11 ($\approx 0$)** |
+| **Seed-to-Seed Stability ($\sigma_{\text{meta}}$)** | $\pm \$178.57$ | $\pm \$281.24$ | $\pm \$752.39$ |
+| **TWAP Max Adverse Excursion (MAE)** | 16.9% drawdown | 1.6% drawdown | 9.4% drawdown |
+| **Sigma86 Max Adverse Excursion (MAE)** | **15.4% drawdown** | 3.1% drawdown | 9.4% drawdown |
+| **MAE Risk Reduction** | **+9.01% drawdown avoided** | -91.2% | **+0.15% drawdown avoided** |
 
 ### Quantitative Findings:
-1. **Martingale Null Hypothesis Proof:** Under driftless Brownian motion, outperformance collapses to **-$1,020** ($\approx 0.1\%$ of $\$1\text{M}$ notional). This confirms theoretical invariance: in an efficient martingale, no deterministic schedule extracts directional alpha. The model does not curve-fit.
-2. **Crash Outperformance & Risk Reduction:** In market crashes, front-loading execution saves the treasury **+$25,783 net of all gas and performance fees**, eliminating **30.8% of Maximum Adverse Excursion (drawdown)** with an Information Ratio of **+4.70**.
+1. **Martingale Null Hypothesis Proof:** Under driftless Brownian motion, outperformance collapses to **-$821.75** ($\approx 0.08\%$ of $\$1\text{M}$ notional). This confirms theoretical invariance: in an efficient martingale, no deterministic schedule extracts directional alpha. The model does not curve-fit.
+2. **Crash Outperformance & Risk Reduction:** In market crashes, front-loading execution saves the treasury **+$12,209 net of all gas and performance fees**, eliminating **9.01% of Maximum Adverse Excursion (drawdown)** with an Information Ratio of **+4.85**.
 3. **Variance Insurance Cost:** In market rallies, underperformance represents the mathematically quantified insurance premium for risk elimination. For an institutional fiduciary, downside protection strictly dominates speculative upside exposure.
 
 ---
@@ -310,7 +318,7 @@ sigma86/
 cd contracts
 forge test -vvv
 ```
-*Expected result: 28 passing tests across 4 suites, 0 failures, 0 compiler warnings.*
+*Expected result: 35 passing tests across 4 suites, 0 failures, 0 compiler warnings.*
 
 ### Running TypeScript Build & MCP Server
 ```bash

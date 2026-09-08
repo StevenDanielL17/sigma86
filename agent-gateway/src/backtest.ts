@@ -258,14 +258,15 @@ function main() {
   console.log(`Formula Applied:           λ = (2 · ln(1/α) · VaR²) / (W₀² · σ² · T)\n`);
 
   // 2. PHASE 2 TRAJECTORY GENERATION
-  const poolLiquidity = 1_000_000; // base pool reserve
+  const poolReserves = { tokenReserve: 1_000_000, quoteReserve: 10_000_000 };
   const twapTraj = computeOptimalTrajectory({
     portfolioSize: totalTokens,
     timeSteps: ticks,
     timeHorizonHours: horizonHours,
     lambda: 1e-12, // Linear TWAP limit
     historicalVol: 0.01,
-    poolLiquidity,
+    spotPrice,
+    poolReserves,
   });
 
   const acTraj = computeOptimalTrajectory({
@@ -274,7 +275,8 @@ function main() {
     timeHorizonHours: horizonHours,
     lambda: varCalib.lambda,
     historicalVol,
-    poolLiquidity,
+    spotPrice,
+    poolReserves,
   });
 
   console.log("[ 2. OPTIMAL TRAJECTORY PROPERTIES ]");

@@ -214,6 +214,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       timeHorizonHours,
       lambda,
       historicalVol,
+      spotPrice,
       poolLiquidity,
       poolReserves,
       maxSlicePctOfPool,
@@ -285,6 +286,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         timeSteps: remainingTicks,
         lambda: revisedCalib.lambda,
         historicalVol: Number(args.realizedVol),
+        spotPrice: Number(args.oraclePrice),
         poolLiquidity: Number(args.currentPoolLiquidity),
       });
       reoptimizedSchedule = revisedTrajectory.schedule;

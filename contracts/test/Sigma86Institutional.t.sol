@@ -7,6 +7,7 @@ import "../src/Sigma86Vault.sol";
 contract MockRouter {
     uint256 public returnAmount;
     bool public shouldFail;
+    bool public zeroBytesReturn;
 
     constructor(uint256 _ret) {
         returnAmount = _ret;
@@ -20,10 +21,17 @@ contract MockRouter {
         shouldFail = _fail;
     }
 
+    function setZeroBytesReturn(bool _zero) external {
+        zeroBytesReturn = _zero;
+    }
+
     receive() external payable {}
 
     fallback() external payable {
         if (shouldFail) revert("Mock swap failed");
+        if (zeroBytesReturn) {
+            return;
+        }
         uint256 ret = returnAmount;
         assembly {
             mstore(0x00, ret)
@@ -36,10 +44,27 @@ contract MockRouter {
 contract MockOracleWithDecimals {
     int256 public price;
     uint8 public feedDecimals;
+    uint80 public roundId = 1;
+    uint80 public answeredInRound = 1;
+    uint256 public updatedAt;
 
     constructor(int256 _p, uint8 _dec) {
         price = _p;
         feedDecimals = _dec;
+        updatedAt = block.timestamp;
+    }
+
+    function setPrice(int256 _p) external {
+        price = _p;
+    }
+
+    function setRounds(uint80 _roundId, uint80 _answeredInRound) external {
+        roundId = _roundId;
+        answeredInRound = _answeredInRound;
+    }
+
+    function setUpdatedAt(uint256 _t) external {
+        updatedAt = _t;
     }
 
     function decimals() external view returns (uint8) {
@@ -47,7 +72,8 @@ contract MockOracleWithDecimals {
     }
 
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
-        return (1, price, 0, block.timestamp, 1);
+        uint256 ts = updatedAt > 0 ? updatedAt : block.timestamp;
+        return (roundId, price, 0, ts, answeredInRound);
     }
 }
 
@@ -371,5 +397,149 @@ contract Sigma86InstitutionalTest is Test {
         assertEq(vault.currentTick(), 5);
         assertEq(uint256(vault.currentState()), uint256(Sigma86Vault.State.IDLE));
         assertEq(vault.getRemainingTicks(), 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 5. ADVANCED TRUST BOUNDARY & STALENESS ATTACK TESTS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    function testStaleOracleRoundReverts() public {
+        // Oracle answers round 1 for roundId 2 (answeredInRound < roundId)
+        oracle.setRounds(2, 1);
+
+        uint256[] memory schedule = new uint256[](1);
+        schedule[0] = 1e18;
+
+        vm.prank(owner);
+        vault.startSchedule(schedule);
+
+        vm.prank(upkeeper);
+        vm.expectRevert("Stale round");
+        vault.performUpkeep("0x");
+    }
+
+    function testStaleOracleTimestampReverts() public {
+        uint256 maxDelay = 1 hours;
+        vm.prank(owner);
+        vault.setMaxOracleDelay(maxDelay);
+        assertEq(vault.maxOracleDelay(), maxDelay);
+
+        uint256[] memory schedule = new uint256[](1);
+        schedule[0] = 1e18;
+
+        vm.prank(owner);
+        vault.startSchedule(schedule);
+
+        // Oracle updatedAt is 2 hours behind block.timestamp
+        oracle.setUpdatedAt(block.timestamp);
+        vm.warp(block.timestamp + 2 hours);
+
+        vm.prank(upkeeper);
+        vm.expectRevert("Oracle price stale");
+        vault.performUpkeep("0x");
+    }
+
+    function testZeroByteRouterReturnHandledSafely() public {
+        // Router returns 0 bytes instead of 32 bytes (simulating silent or non-standard router)
+        router.setZeroBytesReturn(true);
+
+        uint256[] memory schedule = new uint256[](1);
+        schedule[0] = 1e18;
+
+        vm.prank(owner);
+        vault.startSchedule(schedule);
+
+        // Vault should not read stale scratch space, should detect 0 returnAmount, and record failure
+        vm.prank(upkeeper);
+        vault.performUpkeep("0x");
+
+        assertEq(vault.failedAmount(), 1e18, "Zero return data must be treated as failed swap");
+        assertEq(vault.consecutiveFailures(), 1);
+    }
+
+    function testUpdateScheduleWhilePausedAndResume() public {
+        // Vault fails 3 times and trips automated circuit breaker
+        router.setReturn(FAILING_RETURN);
+
+        uint256[] memory schedule = new uint256[](4);
+        schedule[0] = 1e18;
+        schedule[1] = 1e18;
+        schedule[2] = 1e18;
+        schedule[3] = 1e18;
+
+        vm.prank(owner);
+        vault.startSchedule(schedule);
+
+        // Trip circuit breaker
+        for (uint256 i = 0; i < 3; i++) {
+            vm.prank(upkeeper);
+            vault.performUpkeep("0x");
+        }
+        assertEq(uint256(vault.currentState()), uint256(Sigma86Vault.State.PAUSED));
+        assertEq(vault.currentTick(), 3);
+
+        // Update schedule while PAUSED to re-optimize remaining 1 tick into 2 smaller slices
+        uint256[] memory reoptimized = new uint256[](2);
+        reoptimized[0] = 5e17;
+        reoptimized[1] = 5e17;
+
+        vm.prank(owner);
+        vault.updateSchedule(reoptimized);
+        assertEq(vault.getRemainingTicks(), 2);
+
+        // Resume schedule
+        vm.prank(owner);
+        vault.resumeSchedule();
+        assertEq(uint256(vault.currentState()), uint256(Sigma86Vault.State.ACTIVE));
+        assertEq(vault.consecutiveFailures(), 0);
+
+        // Fix router and execute remaining ticks
+        router.setReturn(PASSING_RETURN);
+        vm.prank(upkeeper);
+        vault.performUpkeep("0x");
+        vm.prank(upkeeper);
+        vault.performUpkeep("0x");
+
+        assertEq(vault.currentTick(), 5);
+        assertEq(uint256(vault.currentState()), uint256(Sigma86Vault.State.IDLE));
+    }
+
+    function testWithdrawRemainingInIdleState() public {
+        // Fund vault
+        token.mint(address(vault), 1000e18);
+
+        uint256[] memory schedule = new uint256[](1);
+        schedule[0] = 1e18;
+
+        vm.prank(owner);
+        vault.startSchedule(schedule);
+
+        // Complete schedule -> transitions to IDLE
+        vm.prank(upkeeper);
+        vault.performUpkeep("0x");
+        assertEq(uint256(vault.currentState()), uint256(Sigma86Vault.State.IDLE));
+
+        // Owner can withdraw remaining funds in IDLE state without faking an abort
+        vm.prank(owner);
+        vault.withdrawRemaining(address(token), treasuryRecipient);
+
+        assertEq(token.balanceOf(treasuryRecipient), 1000e18);
+        assertEq(token.balanceOf(address(vault)), 0);
+    }
+
+    function testSetAssetDecimalsExceedingLimitReverts() public {
+        vm.prank(owner);
+        vm.expectRevert("Invalid decimals");
+        vault.setAssetDecimals(37, 18);
+    }
+
+    function testSetMaxSlippageBps() public {
+        vm.prank(owner);
+        vault.setMaxSlippageBps(250);
+        assertEq(vault.maxSlippageBps(), 250);
+
+        vm.prank(owner);
+        vm.expectRevert("Invalid bps");
+        vault.setMaxSlippageBps(10001);
     }
 }

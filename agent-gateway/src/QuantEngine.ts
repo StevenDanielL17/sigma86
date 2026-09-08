@@ -34,6 +34,7 @@ export interface TrajectoryParams {
   timeHorizonHours?: number | undefined;
   lambda: number;
   historicalVol: number;
+  spotPrice?: number | undefined;
   poolLiquidity?: number | undefined;
   poolReserves?: {
     tokenReserve: number;
@@ -229,6 +230,7 @@ export function computeOptimalTrajectory(params: TrajectoryParams): TrajectoryRe
     timeHorizonHours = 1,
     lambda,
     historicalVol,
+    spotPrice,
     poolLiquidity,
     poolReserves,
     maxSlicePctOfPool = 0.05,
@@ -237,30 +239,43 @@ export function computeOptimalTrajectory(params: TrajectoryParams): TrajectoryRe
   if (portfolioSize <= 0) throw new Error("portfolioSize must be positive");
   if (timeSteps <= 0 || !Number.isInteger(timeSteps)) throw new Error("timeSteps must be a positive integer");
 
-  // Determine AMM temporary impact coefficient eta = y / x^2
-  let eta = 1e-6;
+  // Determine AMM pool reserves, spot price, and impact coefficient eta = y / x^2
   let tokenReserve = 1e6;
+  let quoteReserve = 1e6;
+  let spot = spotPrice ?? 1.0;
 
   if (poolReserves && poolReserves.tokenReserve > 0 && poolReserves.quoteReserve > 0) {
     tokenReserve = poolReserves.tokenReserve;
-    eta = poolReserves.quoteReserve / (tokenReserve * tokenReserve);
+    quoteReserve = poolReserves.quoteReserve;
+    spot = quoteReserve / tokenReserve;
   } else if (poolLiquidity !== undefined && poolLiquidity > 0) {
     tokenReserve = poolLiquidity;
-    eta = 1 / poolLiquidity;
+    quoteReserve = tokenReserve * spot;
+  } else {
+    quoteReserve = tokenReserve * spot;
   }
 
+  // AMM temporary price impact factor: eta = y / x^2 ($ / token^2)
+  const eta = quoteReserve / (tokenReserve * tokenReserve);
+
+  // Return variance per discrete execution tick: sigma_tick^2 = (historicalVol^2) / timeSteps
   const variance = historicalVol * historicalVol;
-  // kappa = sqrt( (lambda * variance) / eta )
-  const kappa = Math.sqrt((Math.max(lambda, 0) * variance) / (eta || 1e-9));
+  const tickVariance = variance / timeSteps;
+
+  // Exact dimensionless Almgren-Chriss / Euler-Lagrange optimality on CPMM:
+  // kappa_tick^2 = (lambda * spot * tickVariance) / (portfolioSize * eta)
+  //              = (lambda * tokenReserve * tickVariance) / portfolioSize
+  const kappaSq = (Math.max(lambda, 0) * spot * tickVariance) / ((portfolioSize * eta) || 1e-12);
+  const kappa = Math.sqrt(kappaSq);
 
   // T in normalized tick units: T = timeSteps, dt = 1
   const T = timeSteps;
   const kappaT = kappa * T;
 
   let regime: 'linear_twap' | 'balanced_almgren_chriss' | 'urgent_liquidation';
-  if (kappaT < 1e-4) {
+  if (kappaT < 0.05) {
     regime = 'linear_twap';
-  } else if (kappaT > 50) {
+  } else if (kappaT > 5.0) {
     regime = 'urgent_liquidation';
   } else {
     regime = 'balanced_almgren_chriss';
@@ -329,15 +344,17 @@ export function computeOptimalTrajectory(params: TrajectoryParams): TrajectoryRe
   // Convexity Guard: Cap single-tick slice against pool reserve depth
   if (tokenReserve > 0) {
     const maxSlice = tokenReserve * (maxSlicePctOfPool ?? 0.05);
-    for (let i = 0; i < schedule.length - 1; i++) {
+    for (let i = 0; i < schedule.length; i++) {
       const currentSlice = schedule[i] ?? 0;
       if (currentSlice > maxSlice) {
         const excess = currentSlice - maxSlice;
         schedule[i] = maxSlice;
         // Redistribute excess evenly across subsequent ticks
         const remainingTicks = schedule.length - 1 - i;
-        for (let k = i + 1; k < schedule.length; k++) {
-          schedule[k] = (schedule[k] ?? 0) + excess / remainingTicks;
+        if (remainingTicks > 0) {
+          for (let k = i + 1; k < schedule.length; k++) {
+            schedule[k] = (schedule[k] ?? 0) + excess / remainingTicks;
+          }
         }
       }
     }
@@ -360,7 +377,8 @@ export function computeOptimalTrajectory(params: TrajectoryParams): TrajectoryRe
     const dx = schedule[i] ?? 0;
     expectedSlippageUSD += eta * dx * dx;
     const inv = remainingInventory[i] ?? 0;
-    captureVarianceUSD += variance * inv * inv * ((timeHorizonHours ?? 1) / timeSteps);
+    const invUSD = inv * spot;
+    captureVarianceUSD += tickVariance * invUSD * invUSD;
   }
 
   return {

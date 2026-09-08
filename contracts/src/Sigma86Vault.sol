@@ -66,6 +66,9 @@ contract Sigma86Vault is AutomationCompatibleInterface {
     uint256 public timelockDelay;
     mapping(bytes32 => uint256) public withdrawalProposals;
 
+    // Oracle Staleness Boundary
+    uint256 public maxOracleDelay;
+
     event TickExecuted(uint256 tickIndex, uint256 amount);
     event SwapFailed(uint256 tickIndex, uint256 amount, bytes reason);
     event ScheduleAborted();
@@ -79,6 +82,8 @@ contract Sigma86Vault is AutomationCompatibleInterface {
     event TimelockDelayUpdated(uint256 newDelay);
     event MaxConsecutiveFailuresUpdated(uint256 newMax);
     event AssetDecimalsUpdated(uint8 tokenInDecimals, uint8 tokenOutDecimals);
+    event MaxOracleDelayUpdated(uint256 newDelay);
+    event MaxSlippageBpsUpdated(uint256 newMaxSlippageBps);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Not owner");
@@ -202,17 +207,26 @@ contract Sigma86Vault is AutomationCompatibleInterface {
             let ptr := mload(0x40)
             calldatacopy(ptr, swapData.offset, swapData.length)
             
+            // Clean scratch space to prevent reading uninitialized memory
+            mstore(0x00, 0)
             // Call 1inch router and write first 32 bytes of return data (returnAmount) to memory 0x00
             success := call(gas(), router, 0, ptr, swapData.length, 0x00, 0x20)
-            if success {
+            if and(success, iszero(lt(returndatasize(), 32))) {
                 returnAmount := mload(0x00)
+            }
+            if and(success, lt(returndatasize(), 32)) {
+                returnAmount := 0
             }
         }
         
         // ON-CHAIN TRUST BOUNDARY: Oracle Slippage Verification
         if (success) {
-            (, int256 oraclePrice, , , ) = AggregatorV3Interface(priceFeed).latestRoundData();
+            (uint80 roundId, int256 oraclePrice, , uint256 updatedAt, uint80 answeredInRound) = AggregatorV3Interface(priceFeed).latestRoundData();
             require(oraclePrice > 0, "Invalid oracle price");
+            require(answeredInRound >= roundId, "Stale round");
+            if (maxOracleDelay > 0 && updatedAt > 0) {
+                require(block.timestamp >= updatedAt && block.timestamp - updatedAt <= maxOracleDelay, "Oracle price stale");
+            }
             
             // Decimal-normalized cross-asset math
             uint256 expectedReturn = calculateExpectedReturn(amountToSwap, uint256(oraclePrice));
@@ -254,7 +268,8 @@ contract Sigma86Vault is AutomationCompatibleInterface {
      *         the remaining execution schedule based on realized volatility without resetting accumulators.
      * @param _newTradeSizes Updated array of trade sizes from current tick onwards.
      */
-    function updateSchedule(uint256[] memory _newTradeSizes) external onlyOwner inState(State.ACTIVE) {
+    function updateSchedule(uint256[] memory _newTradeSizes) external onlyOwner {
+        require(currentState == State.ACTIVE || currentState == State.PAUSED, "Invalid state");
         require(_newTradeSizes.length > 0, "New schedule cannot be empty");
         
         // Retain historical executed ticks [0 ... currentTick - 1].
@@ -274,7 +289,8 @@ contract Sigma86Vault is AutomationCompatibleInterface {
      * @param token ERC20 token address
      * @param recipient Target recipient
      */
-    function proposeWithdrawal(address token, address recipient) external onlyOwner inState(State.PAUSED) {
+    function proposeWithdrawal(address token, address recipient) external onlyOwner {
+        require(currentState == State.PAUSED || currentState == State.IDLE, "Invalid state");
         require(token != address(0), "Invalid token");
         require(recipient != address(0), "Invalid recipient");
         bytes32 proposalId = keccak256(abi.encodePacked(token, recipient));
@@ -293,12 +309,13 @@ contract Sigma86Vault is AutomationCompatibleInterface {
     }
 
     /**
-     * @notice Allows owner (or Gnosis Safe) to withdraw remaining tokens when PAUSED.
+     * @notice Allows owner (or Gnosis Safe) to withdraw remaining tokens when PAUSED or IDLE.
      *         Hardened with timelock verification and SafeERC20 compatibility.
      * @param token The ERC20 token address to withdraw.
      * @param recipient The address to send remaining funds to.
      */
-    function withdrawRemaining(address token, address recipient) public onlyOwner inState(State.PAUSED) {
+    function withdrawRemaining(address token, address recipient) public onlyOwner {
+        require(currentState == State.PAUSED || currentState == State.IDLE, "Invalid state");
         require(token != address(0), "Invalid token");
         require(recipient != address(0), "Invalid recipient");
 
@@ -342,9 +359,27 @@ contract Sigma86Vault is AutomationCompatibleInterface {
      * @notice Configures token decimals for cross-asset expected return calculations
      */
     function setAssetDecimals(uint8 _tokenInDecimals, uint8 _tokenOutDecimals) external onlyOwner {
+        require(_tokenInDecimals <= 36 && _tokenOutDecimals <= 36, "Invalid decimals");
         tokenInDecimals = _tokenInDecimals;
         tokenOutDecimals = _tokenOutDecimals;
         emit AssetDecimalsUpdated(_tokenInDecimals, _tokenOutDecimals);
+    }
+
+    /**
+     * @notice Configures maximum allowable oracle staleness delay in seconds
+     */
+    function setMaxOracleDelay(uint256 _newDelay) external onlyOwner {
+        maxOracleDelay = _newDelay;
+        emit MaxOracleDelayUpdated(_newDelay);
+    }
+
+    /**
+     * @notice Configures maximum permissible slippage tolerance in basis points
+     */
+    function setMaxSlippageBps(uint256 _newMaxSlippageBps) external onlyOwner {
+        require(_newMaxSlippageBps <= 10000, "Invalid bps");
+        maxSlippageBps = _newMaxSlippageBps;
+        emit MaxSlippageBpsUpdated(_newMaxSlippageBps);
     }
 
     /**
