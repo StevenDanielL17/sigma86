@@ -1,3 +1,6 @@
-/documents/
 node_modules/
 dist/
+documents/*.pdf
+documents/*.txt
+cache/
+out/

@@ -330,7 +330,23 @@ node dist/index.js
 ### Running 1,000-Path Monte Carlo Simulation
 ```bash
 cd agent-gateway
-node dist/backtest.js
+npm run backtest
+```
+
+### Running Bazantic Sponsor-Chaining Recipe
+```bash
+cd agent-gateway
+npm run test:recipe
+```
+*Executes the 4-step autonomous pipeline chaining Chainlink Data Feeds + Sigma86 Quant Solver + 1inch Route Quotes + Flashbots Protect Dispatch.*
+
+### Deploying to Ethereum Sepolia / Arbitrum Sepolia
+```bash
+cd contracts
+# Copy environment variables
+cp .env.example .env
+# Deploy to Sepolia with Etherscan verification
+make deploy-sepolia
 ```
 
 ---
@@ -343,4 +359,13 @@ node dist/backtest.js
 4. **MEV Elimination:** Transactions are bundled and submitted directly to private block builders via Flashbots Protect RPC, preventing public mempool sandwich attacks.
 
 ---
-*Built for institutional treasury risk management.*
+
+## 📦 SECTION 7: HACKATHON SUBMISSION DELIVERABLES
+
+* 🎬 **3-Minute Demo Video Script:** [`documents/video_script.md`](documents/video_script.md)
+* 📝 **ETHGlobal Portal Submission Copy:** [`documents/submission_copy.md`](documents/submission_copy.md)
+* ⚡ **Bazantic x402 Gateway Configuration:** [`agent-gateway/bazantic.config.json`](agent-gateway/bazantic.config.json)
+* 🚀 **Multi-Chain Deployment Script:** [`contracts/script/DeploySigma86Vault.s.sol`](contracts/script/DeploySigma86Vault.s.sol)
+
+---
+*Built for institutional treasury risk management at ETHOnline 2026.*

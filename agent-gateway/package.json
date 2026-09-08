@@ -7,6 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "backtest": "tsc && node dist/backtest.js",
+    "test:recipe": "tsc && node dist/bazanticRecipe.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

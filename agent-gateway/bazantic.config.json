@@ -1,0 +1,75 @@
+{
+  "$schema": "https://bazantic.com/schemas/mpp-gateway-v1.json",
+  "service": {
+    "name": "sigma86-execution-solver",
+    "version": "2.0.0",
+    "description": "Institutional-grade Almgren-Chriss deterministic liquidation solver for DAO treasuries.",
+    "category": "quantitative-finance",
+    "protocol": "mcp-stdio-v1",
+    "endpoint": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "env": {
+        "NODE_ENV": "production",
+        "RPC_URL": "${SEPOLIA_RPC_URL}",
+        "FLASHBOTS_RPC": "https://rpc.flashbots.net"
+      }
+    }
+  },
+  "mppGateway": {
+    "gatewayId": "gw_sigma86_ethonline2026",
+    "authType": "x402-bearer",
+    "rateLimits": {
+      "requestsPerMinute": 120,
+      "maxConcurrentJobs": 5
+    },
+    "monetization": {
+      "pricingModel": "performance-fee",
+      "performanceFeeBps": 2000,
+      "settlementToken": "USDC"
+    }
+  },
+  "tools": [
+    {
+      "name": "calculate_liquidation_schedule",
+      "description": "Computes closed-form VaR-calibrated Almgren-Chriss optimal trajectory for CPMM liquidity pools.",
+      "schema": {
+        "required": ["portfolioSize", "spotPrice", "historicalVol", "timeHorizonHours", "timeSteps", "varBudgetDollars"],
+        "parameters": {
+          "portfolioSize": "number",
+          "spotPrice": "number",
+          "historicalVol": "number",
+          "timeHorizonHours": "number",
+          "timeSteps": "number",
+          "varBudgetDollars": "number",
+          "confidenceInterval": "number (default: 0.95)",
+          "poolReserves": "object { baseTokenReserve: number, quoteTokenReserve: number }"
+        }
+      }
+    },
+    {
+      "name": "evaluate_execution_health",
+      "description": "Evaluates ongoing execution performance against benchmark slippage and detects oracle/pool dislocations.",
+      "schema": {
+        "required": ["executedTokens", "realizedUSDC", "benchmarkPrice", "currentPoolPrice", "currentOraclePrice", "historicalVol", "realizedVol"],
+        "parameters": {
+          "executedTokens": "number",
+          "realizedUSDC": "number",
+          "benchmarkPrice": "number",
+          "currentPoolPrice": "number",
+          "currentOraclePrice": "number",
+          "historicalVol": "number",
+          "realizedVol": "number"
+        }
+      }
+    }
+  ],
+  "recipes": [
+    {
+      "recipeId": "recipe_institutional_treasury_copilot",
+      "name": "Institutional Treasury Copilot (Chainlink + 1inch + Sigma86)",
+      "description": "Autonomous end-to-end treasury unwind: polls Chainlink feed, calculates AC trajectory via Sigma86, fetches 1inch quote, checks oracle trust boundary, and dispatches via Flashbots Protect.",
+      "entrypoint": "dist/bazanticRecipe.js"
+    }
+  ]
+}
