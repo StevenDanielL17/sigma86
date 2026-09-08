@@ -11,6 +11,8 @@ contract MockOneInchRouter {
         shouldFail = _shouldFail;
     }
 
+    receive() external payable {}
+
     // Since the Vault uses assembly `call`, we mock a generic fallback or specific swap selector
     fallback() external payable {
         if (shouldFail) {

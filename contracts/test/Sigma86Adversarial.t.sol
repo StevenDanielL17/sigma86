@@ -15,6 +15,7 @@ contract MockOneInchRouter {
     uint256 public returnAmount;
     constructor(uint256 _ret) { returnAmount = _ret; }
     function setReturn(uint256 _ret) external { returnAmount = _ret; }
+    receive() external payable {}
     fallback() external payable {
         uint256 ret = returnAmount;
         assembly { mstore(0x00, ret) mstore(0x20, ret) return(0x00, 0x40) }

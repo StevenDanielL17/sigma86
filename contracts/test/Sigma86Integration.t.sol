@@ -20,7 +20,7 @@ contract MockOneInchRouter {
 
     function setShouldFail(bool _v) external { shouldFail = _v; }
     function setReturnAmount(uint256 _v) external { returnAmountOverride = _v; }
-
+    receive() external payable {}
     fallback() external payable {
         if (shouldFail) revert("Mock swap failed");
         uint256 ret = returnAmountOverride;
