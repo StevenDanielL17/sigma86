@@ -27,17 +27,17 @@ let m_w = 123456789;
 let m_z = 987654321;
 const mask = 0xffffffff;
 
-function setSeed(seed: number) {
+let setSeed = function(seed: number) {
   m_w = (123456789 + seed) & mask;
   m_z = (987654321 - seed) & mask;
-}
+};
 
-function seededRandom() {
+let seededRandom = function() {
   m_z = (36969 * (m_z & 65535) + (m_z >> 16)) & mask;
   m_w = (18000 * (m_w & 65535) + (m_w >> 16)) & mask;
   let result = ((m_z << 16) + (m_w & 65535)) >>> 0;
   return result / 4294967296;
-}
+};
 
 interface PathResult {
   twapRealized: number;
@@ -348,14 +348,73 @@ function main() {
   }
 
   console.log("[ 4. QUANTITATIVE VERIFICATION SUMMARY ]");
-  console.log("1. Martingale Null Hypothesis: Under driftless Brownian motion, outperformance");
-  console.log(`   mean collapses to ${formatUSD(chopStats.grandMeanDelta)} (~$0 relative to $1M notional), validating`);
-  console.log("   Almgren-Chriss theoretical invariance (no spurious directional alpha).");
-  console.log("2. Downside Protection: In market crashes, Sigma86 captures significant outperformance");
-  console.log(`   (${formatUSD(crashStats.grandMeanDelta)}) with an Information Ratio of ${crashStats.informationRatio.toFixed(2)} and`);
-  console.log(`   ${crashStats.maeImprovementPct.toFixed(1)}% reduction in Maximum Adverse Excursion.`);
-  console.log("3. Risk Premium: In market rallies, underperformance represents the mathematically");
-  console.log("   expected cost of variance insurance for institutional treasury protection.");
+  console.log("Running assertions on mathematical invariants...");
+  
+  const assert = (condition: boolean, message: string) => {
+    if (!condition) throw new Error(`ASSERTION FAILED: ${message}`);
+  };
+
+  assert(crashStats.grandMeanDelta > 5000, `Crash outperformance failed. Expected > 5000, got ${crashStats.grandMeanDelta}`);
+  assert(crashStats.maeImprovementPct > 5.0, `Crash MAE reduction failed. Expected > 5%, got ${crashStats.maeImprovementPct}%`);
+  console.log("PASS: 1. Downside Protection successfully captured in negative drift.");
+
+  assert(Math.abs(chopStats.grandMeanDelta) < 1500, `Martingale invariance failed. Expected near-zero drift outperformance (abs < 1500 for slippage), got ${chopStats.grandMeanDelta}`);
+  console.log("PASS: 2. Martingale Null Hypothesis invariant maintained (no spurious alpha).");
+
+  assert(rallyStats.grandMeanDelta < -5000, `Rally underperformance failed. Expected < -5000, got ${rallyStats.grandMeanDelta}`);
+  console.log("PASS: 3. Rally risk premium correctly represented as cost of insurance.");
 }
 
-main();
+// Add fail-path flags parsing
+const args = process.argv.slice(2);
+if (args.includes("--fail-path-crash")) {
+  console.log("\n[!] INJECTING FAIL-PATH: Breaking trajectory logic to sabotage crash performance.");
+  // Hack runSinglePath to deduct from AC realized cash to simulate severe slippage
+  const origMathCos = Math.cos;
+  Math.cos = function(x: number) {
+    if (x === 2 * Math.PI * 0.12345) return 0; // dummy signature
+    return origMathCos(x);
+  };
+  // We can't easily monkeypatch local functions, so let's just ruin the schedule array directly before monte carlo runs
+  // We'll intercept the crashStats call by making the schedules bad globally
+  const origLog = console.log;
+  console.log = function(...argsLog: any[]) {
+    if (argsLog[0] === "[ 3. 1,000-PATH STOCHASTIC MONTE CARLO SIMULATION (5 Seeds × 200 Paths = 1,000 Paths/Regime) ]\n") {
+       // We're about to run the simulations. Let's mess up the AMM invariant tracker just for AC
+       const origSwap = AMMInvariantTracker.prototype.swapTokensForQuote;
+       AMMInvariantTracker.prototype.swapTokensForQuote = function(dx: number) {
+         const res = origSwap.call(this, dx);
+         // If dx is not 2000 (TWAP slice), punish it severely
+         if (dx !== 2000) {
+           return { ...res, quoteOut: res.quoteOut * 0.5 }; // 50% penalty to AC
+         }
+         return res;
+       };
+    }
+    origLog.apply(console, argsLog);
+  };
+}
+
+if (args.includes("--fail-path-martingale")) {
+  console.log("\n[!] INJECTING FAIL-PATH: Introducing directional bias into Martingale random walk.");
+  const origSetSeed = setSeed;
+  // @ts-ignore
+  setSeed = function(seed: number) {
+    origSetSeed(seed);
+    // If the seed matches the Martingale string length + char code
+    if (seed === ("Driftless Martingale (0% Trend, High Volatility)".charCodeAt(0) + "Driftless Martingale (0% Trend, High Volatility)".length)) {
+      const origSeededRandom = seededRandom;
+      // @ts-ignore
+      seededRandom = function() {
+        return 0.8 + (origSeededRandom() * 0.2); // Heavily biased towards 1
+      };
+    }
+  };
+}
+
+try {
+  main();
+} catch (err) {
+  console.error(err);
+  process.exit(1);
+}
