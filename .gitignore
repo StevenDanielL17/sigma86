@@ -4,3 +4,9 @@ documents/*.pdf
 documents/*.txt
 cache/
 out/
+
+# Private session memory — never push
+CLAUDE.md
+memory/
+rules/
+workflow/
