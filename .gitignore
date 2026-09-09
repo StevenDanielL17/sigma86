@@ -11,3 +11,7 @@ CRITIC.md
 memory/
 rules/
 workflow/
+# Ignore all markdown files except README
+*.md
+!README.md
+!readme.md
