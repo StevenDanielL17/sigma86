@@ -13,10 +13,29 @@
 export interface CalibrateLambdaParams {
   portfolioSize: number;                   // X_0: total tokens to liquidate
   spotPrice: number;                       // S_0: price per token in USD
-  historicalVol: number;                   // sigma: trailing annualized or horizon-normalized volatility
+  /**
+   * sigma: asset return volatility.
+   *
+   * UNIT IS DETERMINED BY volIsAnnualized (below). Passing the wrong unit
+   * produces a wrong lambda that looks identical to a correct one in output.
+   *
+   * volIsAnnualized = false (DEFAULT): pass horizon-normalized vol,
+   *   e.g. σ_horizon = σ_annual * sqrt(T_hours / 8760).
+   *   Example: 2.5h horizon, 70% annual crypto vol → σ_horizon ≈ 0.053.
+   *
+   * volIsAnnualized = true: pass raw annualized vol (e.g. 0.70 for 70%/year).
+   *   The function converts internally: σ_horizon = σ_annual * sqrt(T_hours / 8760).
+   */
+  historicalVol: number;
   timeHorizonHours: number;               // T: liquidation horizon in hours
   varBudgetDollars?: number | undefined;   // VaR budget in USD
   confidenceInterval?: number | undefined; // alpha: confidence level (default: 0.95 for 95% VaR)
+  /**
+   * Set true if historicalVol is annualized (industry convention, e.g. 0.70 = 70%/year).
+   * The function will normalize to the execution horizon before computing lambda.
+   * Default: false — caller is responsible for passing horizon-normalized vol.
+   */
+  volIsAnnualized?: boolean;
 }
 
 export interface CalibrateLambdaResult {
@@ -33,7 +52,15 @@ export interface TrajectoryParams {
   timeSteps: number;
   timeHorizonHours?: number | undefined;
   lambda: number;
+  /**
+   * sigma: asset return volatility.
+   * UNIT: horizon-normalized by default (volIsAnnualized=false).
+   * Set volIsAnnualized=true to pass annualized vol; function converts internally.
+   * Must match the volIsAnnualized flag used in calibrateLambdaFromVaR to keep
+   * lambda and kappa on the same time scale.
+   */
   historicalVol: number;
+  volIsAnnualized?: boolean; // default false (caller passes horizon vol)
   spotPrice?: number | undefined;
   poolLiquidity?: number | undefined;
   poolReserves?: {
@@ -109,12 +136,35 @@ export function calibrateLambdaFromVaR(params: CalibrateLambdaParams): Calibrate
     historicalVol,
     timeHorizonHours,
     confidenceInterval = 0.95,
+    volIsAnnualized = false,
   } = params;
 
   if (portfolioSize <= 0) throw new Error("portfolioSize must be positive");
   if (spotPrice <= 0) throw new Error("spotPrice must be positive");
   if (historicalVol <= 0) throw new Error("historicalVol must be positive");
   if (timeHorizonHours <= 0) throw new Error("timeHorizonHours must be positive");
+
+  // UNIT NORMALIZATION: sigma must be in horizon units for the formula to be dimensionally correct.
+  // If the caller passes annualized vol (volIsAnnualized=true), convert here.
+  // If they pass horizon vol (default), use it directly.
+  // Guard: reject suspiciously large horizon vol — sigma > 2.0 for a sub-day horizon
+  // almost certainly means the caller forgot to set volIsAnnualized=true.
+  let sigmaHorizon: number;
+  if (volIsAnnualized) {
+    // Annualized to horizon conversion: sigma_horizon = sigma_annual * sqrt(T_hours / 8760)
+    sigmaHorizon = historicalVol * Math.sqrt(timeHorizonHours / 8760);
+  } else {
+    sigmaHorizon = historicalVol;
+    // Fail-fast guard: if sigma > 2.0 and horizon < 24h, it almost certainly is
+    // annualized vol passed without the flag — make the error visible instead of silent.
+    if (sigmaHorizon > 2.0 && timeHorizonHours < 24) {
+      throw new Error(
+        `calibrateLambdaFromVaR: historicalVol=${historicalVol} looks like annualized vol ` +
+        `(>200%) but volIsAnnualized=false for a ${timeHorizonHours}h horizon. ` +
+        `Pass volIsAnnualized=true if your vol is annualized, or pass horizon-normalized vol directly.`
+      );
+    }
+  }
 
   const portfolioValueUSD = portfolioSize * spotPrice;
 
@@ -133,20 +183,15 @@ export function calibrateLambdaFromVaR(params: CalibrateLambdaParams): Calibrate
     : 0.05 * portfolioValueUSD;
 
   // Gaussian inverse CDF approximation for CVaR
-  // For standard normal: z_alpha for 95% is approx 1.644853
   const zAlpha = approximateNormInv(1 - alphaTail);
-  // Standard normal PDF at zAlpha: phi(z) = exp(-z^2 / 2) / sqrt(2 * pi)
   const phiZ = Math.exp(-0.5 * zAlpha * zAlpha) / Math.sqrt(2 * Math.PI);
-  // CVaR / Expected Shortfall for normal distribution:
   const cvarMultiplier = zAlpha > 0 ? (phiZ / alphaTail) / zAlpha : 1.25;
   const cvarDollars = varDollars * cvarMultiplier;
 
-  // Formal derivation:
-  // Under sub-Gaussian tail bounds, VaR^2 = 2 * ln(1 / alpha_tail) * Variance.
-  // Equating variance scale to Almgren-Chriss dimensional aversion:
-  // lambda = (2 * ln(1 / alpha_tail) * VaR^2) / (W_0^2 * sigma^2 * T)
+  // lambda = (2 * ln(1 / alpha_tail) * VaR^2) / (W_0^2 * sigma_horizon^2 * T)
+  // sigma_horizon is already in horizon-normalized units; T is in hours (same base as sigma_horizon).
   const lnTerm = 2 * Math.log(1 / alphaTail);
-  const denominator = (portfolioValueUSD * portfolioValueUSD) * (historicalVol * historicalVol) * timeHorizonHours;
+  const denominator = (portfolioValueUSD * portfolioValueUSD) * (sigmaHorizon * sigmaHorizon) * timeHorizonHours;
 
   const lambda = (lnTerm * varDollars * varDollars) / (denominator || 1e-12);
 
@@ -159,6 +204,7 @@ export function calibrateLambdaFromVaR(params: CalibrateLambdaParams): Calibrate
     portfolioValueUSD,
   };
 }
+
 
 /**
  * Standard normal inverse CDF approximation (Abramowitz & Stegun / Winitzki)
@@ -230,6 +276,7 @@ export function computeOptimalTrajectory(params: TrajectoryParams): TrajectoryRe
     timeHorizonHours = 1,
     lambda,
     historicalVol,
+    volIsAnnualized = false,
     spotPrice,
     poolLiquidity,
     poolReserves,
@@ -238,6 +285,22 @@ export function computeOptimalTrajectory(params: TrajectoryParams): TrajectoryRe
 
   if (portfolioSize <= 0) throw new Error("portfolioSize must be positive");
   if (timeSteps <= 0 || !Number.isInteger(timeSteps)) throw new Error("timeSteps must be a positive integer");
+
+  // UNIT NORMALIZATION: same logic as calibrateLambdaFromVaR — must match to keep
+  // lambda and kappa on the same time scale. Use the same volIsAnnualized flag.
+  let sigmaHorizon: number;
+  if (volIsAnnualized) {
+    sigmaHorizon = historicalVol * Math.sqrt(timeHorizonHours / 8760);
+  } else {
+    sigmaHorizon = historicalVol;
+    if (sigmaHorizon > 2.0 && timeHorizonHours < 24) {
+      throw new Error(
+        `computeOptimalTrajectory: historicalVol=${historicalVol} looks like annualized vol ` +
+        `(>200%) but volIsAnnualized=false for a ${timeHorizonHours}h horizon. ` +
+        `Pass volIsAnnualized=true if your vol is annualized, or pass horizon-normalized vol directly.`
+      );
+    }
+  }
 
   // Determine AMM pool reserves, spot price, and impact coefficient eta = y / x^2
   let tokenReserve = 1e6;
@@ -258,8 +321,8 @@ export function computeOptimalTrajectory(params: TrajectoryParams): TrajectoryRe
   // AMM temporary price impact factor: eta = y / x^2 ($ / token^2)
   const eta = quoteReserve / (tokenReserve * tokenReserve);
 
-  // Return variance per discrete execution tick: sigma_tick^2 = (historicalVol^2) / timeSteps
-  const variance = historicalVol * historicalVol;
+  // Return variance per discrete execution tick: sigma_tick^2 = (sigmaHorizon^2) / timeSteps
+  const variance = sigmaHorizon * sigmaHorizon;
   const tickVariance = variance / timeSteps;
 
   // Exact dimensionless Almgren-Chriss / Euler-Lagrange optimality on CPMM:

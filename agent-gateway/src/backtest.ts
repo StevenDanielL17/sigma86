@@ -74,8 +74,12 @@ function runSinglePath(
   let acWorstDrawdown = 0;
 
   for (let i = 0; i < ticks; i++) {
-    // Stochastic Brownian motion step: drift + random chop
-    const randomShock = (Math.random() * 2 - 1) * chopVolatility;
+    // Gaussian Brownian motion increment: drift + N(0, chopVolatility^2) per tick.
+    // Box-Muller transform: produces a standard normal variate Z from two uniform samples.
+    const u1 = Math.random();
+    const u2 = Math.random();
+    const gaussian = Math.sqrt(-2 * Math.log(Math.max(u1, 1e-15))) * Math.cos(2 * Math.PI * u2);
+    const randomShock = gaussian * chopVolatility;
     const tickDrift = priceDriftPerTick + randomShock;
 
     // 1. Execute TWAP slice
