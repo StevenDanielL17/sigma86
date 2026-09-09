@@ -22,6 +22,23 @@ import {
   AMMInvariantTracker,
 } from "./QuantEngine.js";
 
+// Deterministic RNG (Multiply-With-Carry) for reproducible backtests
+let m_w = 123456789;
+let m_z = 987654321;
+const mask = 0xffffffff;
+
+function setSeed(seed: number) {
+  m_w = (123456789 + seed) & mask;
+  m_z = (987654321 - seed) & mask;
+}
+
+function seededRandom() {
+  m_z = (36969 * (m_z & 65535) + (m_z >> 16)) & mask;
+  m_w = (18000 * (m_w & 65535) + (m_w >> 16)) & mask;
+  let result = ((m_z << 16) + (m_w & 65535)) >>> 0;
+  return result / 4294967296;
+}
+
 interface PathResult {
   twapRealized: number;
   acRealized: number;
@@ -76,8 +93,8 @@ function runSinglePath(
   for (let i = 0; i < ticks; i++) {
     // Gaussian Brownian motion increment: drift + N(0, chopVolatility^2) per tick.
     // Box-Muller transform: produces a standard normal variate Z from two uniform samples.
-    const u1 = Math.random();
-    const u2 = Math.random();
+    const u1 = seededRandom();
+    const u2 = seededRandom();
     const gaussian = Math.sqrt(-2 * Math.log(Math.max(u1, 1e-15))) * Math.cos(2 * Math.PI * u2);
     const randomShock = gaussian * chopVolatility;
     const tickDrift = priceDriftPerTick + randomShock;
@@ -151,6 +168,9 @@ function runMonteCarloRegime(
   initialSpotPrice: number,
   totalTokens: number
 ): RegimeStatistics {
+  // Set seed based on regime name to ensure deterministic but varied sequences per regime
+  setSeed(name.charCodeAt(0) + name.length);
+
   const seedMeans: number[] = [];
   const allDeltas: number[] = [];
   let sumTwap = 0;
