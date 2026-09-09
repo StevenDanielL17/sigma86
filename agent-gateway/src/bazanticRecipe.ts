@@ -88,21 +88,25 @@ export async function queryChainlinkDataFeed(
   tokenSymbol: string,
   _rpcUrl?: string
 ): Promise<Step1ChainlinkResult> {
-  // In production, queries AggregatorV3Interface on-chain via Viem/Ethers.
-  // For automated recipes, provides verified fallback with live round timestamps.
   const spotPrice = tokenSymbol.toUpperCase() === "WETH" ? 2500.0 : 10.0;
+  
+  let isStale = false;
+  let updatedAt = Math.floor(Date.now() / 1000) - 30; // 30s ago (fresh)
+  
+  if (process.argv.includes("--fail-path-stale")) {
+    updatedAt = Math.floor(Date.now() / 1000) - (48 * 3600); // 48h ago
+    isStale = true;
+  }
+
   return {
     spotPriceUSD: spotPrice,
     roundId: "18446744073709553551",
-    updatedAt: Math.floor(Date.now() / 1000) - 30, // 30s ago (fresh)
-    trailing30DayVol: 0.05, // 5% trailing annualized volatility
-    isStale: false,
+    updatedAt,
+    trailing30DayVol: 0.05, 
+    isStale,
   };
 }
 
-/**
- * Step 2: Compute Almgren-Chriss Trajectory using Sigma86 Quant Engine
- */
 export function computeSigma86Schedule(
   config: RecipeConfig,
   spotPriceUSD: number,
@@ -146,17 +150,18 @@ export function computeSigma86Schedule(
   };
 }
 
-/**
- * Step 3: Fetch Quote & Swap Payload from 1inch Aggregation Router
- */
 export async function fetch1inchAggregationQuote(
   fromToken: string,
   toToken: string,
   amountUnits: number,
   spotPriceUSD: number
 ): Promise<Step3OneInchResult> {
-  // Simulates or calls 1inch v6 Aggregator API: /swap/v6.0/1/swap
-  const expectedReturn = amountUnits * spotPriceUSD * 0.9995; // 5 bps market depth impact
+  let expectedReturn = amountUnits * spotPriceUSD * 0.9995; // 5 bps market depth impact
+
+  if (process.argv.includes("--fail-path-slippage")) {
+    expectedReturn = amountUnits * spotPriceUSD * 0.85; // 15% slippage catastrophe
+  }
+
   return {
     fromToken,
     toToken,
@@ -253,6 +258,8 @@ export async function executeBazanticTreasuryRecipe(
 
 // CLI test entrypoint
 if (process.argv[1]?.endsWith("bazanticRecipe.ts") || process.argv[1]?.endsWith("bazanticRecipe.js")) {
+  const args = process.argv.slice(2);
+  
   const defaultConfig: RecipeConfig = {
     daoName: "Uniswap DAO Treasury",
     treasuryToken: "UNI",
@@ -266,7 +273,22 @@ if (process.argv[1]?.endsWith("bazanticRecipe.ts") || process.argv[1]?.endsWith(
     flashbotsRpc: "https://rpc.flashbots.net",
   };
 
-  executeBazanticTreasuryRecipe(defaultConfig).catch((err) => {
+  executeBazanticTreasuryRecipe(defaultConfig).then((summary) => {
+    // Programmatic verification of fail-paths
+    if (args.includes("--fail-path-slippage") || args.includes("--fail-path-stale")) {
+      const assert = (condition: boolean, message: string) => {
+        if (!condition) throw new Error(`ASSERTION FAILED: ${message}`);
+      };
+      
+      console.log("\n[ 🛡️ VERIFYING FAIL-PATH ASSERTIONS ]");
+      assert(summary.status === "FAILED", `Expected Recipe status to be FAILED, got ${summary.status}`);
+      assert(summary.step4_verification.trustBoundaryPassed === false, "Trust boundary should have been rejected");
+      assert(summary.step4_verification.dispatchStatus === "CIRCUIT_BREAKER_TRIPPED", "Circuit breaker did not trip");
+      assert(summary.step4_verification.txHashMock === "0x0000000000000000000000000000000000000000000000000000000000000000", "Tx Hash should be zeroed out");
+      
+      console.log("PASS: Circuit Breaker successfully caught the fail-path and prevented the Flashbots dispatch.");
+    }
+  }).catch((err) => {
     console.error("Recipe execution failed:", err);
     process.exit(1);
   });
