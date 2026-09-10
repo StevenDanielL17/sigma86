@@ -15,3 +15,5 @@ workflow/
 *.md
 !README.md
 !readme.md
+
+contracts/.env
