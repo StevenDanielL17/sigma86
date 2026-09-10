@@ -55,7 +55,13 @@ contract DeploySigma86Vault is Script {
     }
 
     function run() external returns (address vaultAddress) {
-        uint256 deployerPrivateKey = vm.envOr("PRIVATE_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
+        uint256 deployerPrivateKey;
+        if (block.chainid == 31337) {
+            deployerPrivateKey = vm.envOr("PRIVATE_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
+        } else {
+            // CRITICAL: No silent fallbacks on live networks. If the key is missing or malformed (no 0x), crash immediately.
+            deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        }
         address deployer = vm.addr(deployerPrivateKey);
 
         NetworkConfig memory config = getNetworkConfig();
