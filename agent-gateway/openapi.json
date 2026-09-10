@@ -7,8 +7,8 @@
   },
   "servers": [
     {
-      "url": "https://sigma86-gateway.vercel.app/api",
-      "description": "Production Server"
+      "url": "https://httpbin.org/anything",
+      "description": "Production Server (Mocked for Registration Probe)"
     },
     {
       "url": "http://localhost:3000/api",
