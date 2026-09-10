@@ -1,0 +1,91 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Sigma86 Quant Execution API",
+    "description": "Institutional-grade Almgren-Chriss deterministic liquidation solver for DAO treasuries.",
+    "version": "2.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://sigma86-gateway.vercel.app/api",
+      "description": "Production Server"
+    },
+    {
+      "url": "http://localhost:3000/api",
+      "description": "Local Development Server"
+    }
+  ],
+  "paths": {
+    "/calculate_liquidation_schedule": {
+      "post": {
+        "summary": "Computes optimal CPMM trajectory",
+        "description": "Computes closed-form VaR-calibrated Almgren-Chriss optimal trajectory for CPMM liquidity pools.",
+        "operationId": "calculateLiquidationSchedule",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["portfolioSize", "spotPrice", "historicalVol", "timeHorizonHours", "timeSteps", "varBudgetDollars"],
+                "properties": {
+                  "portfolioSize": { "type": "number" },
+                  "spotPrice": { "type": "number" },
+                  "historicalVol": { "type": "number" },
+                  "timeHorizonHours": { "type": "number" },
+                  "timeSteps": { "type": "number" },
+                  "varBudgetDollars": { "type": "number" },
+                  "confidenceInterval": { "type": "number", "default": 0.95 },
+                  "poolReserves": {
+                    "type": "object",
+                    "properties": {
+                      "baseTokenReserve": { "type": "number" },
+                      "quoteTokenReserve": { "type": "number" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful calculation"
+          }
+        }
+      }
+    },
+    "/evaluate_execution_health": {
+      "post": {
+        "summary": "Evaluates ongoing execution performance",
+        "description": "Evaluates ongoing execution performance against benchmark slippage and detects oracle/pool dislocations.",
+        "operationId": "evaluateExecutionHealth",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["executedTokens", "realizedUSDC", "benchmarkPrice", "currentPoolPrice", "currentOraclePrice", "historicalVol", "realizedVol"],
+                "properties": {
+                  "executedTokens": { "type": "number" },
+                  "realizedUSDC": { "type": "number" },
+                  "benchmarkPrice": { "type": "number" },
+                  "currentPoolPrice": { "type": "number" },
+                  "currentOraclePrice": { "type": "number" },
+                  "historicalVol": { "type": "number" },
+                  "realizedVol": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Health evaluation result"
+          }
+        }
+      }
+    }
+  }
+}
