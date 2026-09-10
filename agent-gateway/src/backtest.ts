@@ -250,7 +250,7 @@ function formatUSD(val: number): string {
 function main() {
   console.log("===================================================================================");
   console.log("= SIGMA86 INSTITUTIONAL MONTE CARLO SOLVER BENCHMARK                              =");
-  console.log("= Quantitative Calibration: Jane Street & Goldman Sachs Mathematical Standards   =");
+  console.log("= Quantitative Calibration: Empirical Execution Benchmark   =");
   console.log("===================================================================================\n");
 
   // Portfolio & Market Parameters

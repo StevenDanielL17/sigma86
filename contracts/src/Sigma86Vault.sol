@@ -31,7 +31,7 @@ interface AggregatorV3Interface {
 /**
  * @title Sigma86Vault
  * @notice Institutional Quantitative Execution Vault
- *         Engineered to Jane Street and Goldman Sachs quantitative research standards.
+ *         
  *         Features:
  *         - Almgren-Chriss discrete schedule execution
  *         - Gas-optimized low-overhead Yul assembly execution core for private MEV bundles

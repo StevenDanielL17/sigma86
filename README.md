@@ -1,10 +1,10 @@
-﻿# Sigma86
+# Sigma86
 
 **Institutional Quantitative Execution Protocol**
 
 Sigma86 is a deterministic liquidation solver for DAO treasuries. When a DAO needs to sell millions of dollars of native tokens over a multi-day horizon, traditional linear TWAP bleeds capital to AMM convexity (dx / (x + dx)) and MEV bots. 
 
-Sigma86 adapts Wall Street's **Almgren-Chriss (2000)** optimal execution model to Constant Product Market Makers (CPMM). It derives a closed-form mapping from a DAO's Value-at-Risk (VaR) budget directly into an optimal hyperbolic decay schedule. This schedule is autonomously executed by an off-chain Bazantic agent via a gas-optimized Yul assembly vault, defended by Chainlink Oracles and Flashbots.
+Sigma86 adapts **Almgren-Chriss (2000)** optimal execution model to Constant Product Market Makers (CPMM). It derives a closed-form mapping from a DAO's Value-at-Risk (VaR) budget directly into an optimal hyperbolic decay schedule. This schedule is autonomously executed by an off-chain Bazantic agent via a gas-optimized Yul assembly vault, defended by Chainlink Oracles and Flashbots.
 
 ---
 
