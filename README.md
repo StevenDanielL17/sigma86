@@ -42,7 +42,9 @@ $$\int_0^T \text{Cost}(t) dt = \int_0^T \eta_{\text{AMM}} \cdot v(t)^2 dt$$
 where:
 $$\eta_{\text{AMM}} = \frac{P_0}{x} = \frac{y}{x^2}$$
 
-Thus, **CPMM price impact mathematically collapses into the exact quadratic continuous-time Almgren-Chriss formulation**, proving that the Almgren-Chriss optimal trajectory is structurally optimal for decentralized AMMs when $\Delta x \ll x$.
+Thus, in the continuous-time limit ($\Delta x / x \to 0$), CPMM price impact collapses into the quadratic Almgren-Chriss cost structure, making the AC optimal trajectory a valid first-order approximation for decentralized AMMs.
+
+> **Scope and approximation disclosure (important):** The collapse to quadratic cost is a *first-order approximation* valid when each execution slice is small relative to the pool reserve ($\Delta x \ll x_{reserve}$). In discrete execution, the dropped higher-order terms $O((\Delta x / x)^2)$ produce a residual convexity error proportional to the slice fraction squared. Sigma86 controls this with a configurable `maxSlicePctOfPool` guard (default 5%) that caps each tick's slice to 5% of the reserve — keeping the linearization error below ~0.25% per tick. The full closed-form trajectory under the exact nonlinear CPMM impact function (without Taylor expansion) does not have a closed-form solution and would require numerical integration of the Euler-Lagrange equation; this is acknowledged future work. All backtest figures in this repository are generated under the linearized model.
 
 ---
 
