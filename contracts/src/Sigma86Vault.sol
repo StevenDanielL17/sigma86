@@ -34,7 +34,7 @@ interface AggregatorV3Interface {
  *         Engineered to Jane Street and Goldman Sachs quantitative research standards.
  *         Features:
  *         - Almgren-Chriss discrete schedule execution
- *         - Hyper-latency zero-memory Yul assembly execution core for private MEV bundles
+ *         - Gas-optimized low-overhead Yul assembly execution core for private MEV bundles
  *         - Decimal-normalized cross-asset Chainlink oracle slippage protection
  *         - Automated dynamic circuit breaker on consecutive slippage breaches
  *         - Multi-signature / Gnosis Safe timelock-hardened asset recovery
@@ -201,7 +201,7 @@ contract Sigma86Vault is AutomationCompatibleInterface {
         bool success;
         uint256 returnAmount;
         
-        // HYPER-LATENCY EXECUTION CORE
+        // Gas-optimized EXECUTION CORE
         // Bypassing Solidity's ABI encoder and memory copying overhead
         assembly {
             let ptr := mload(0x40)

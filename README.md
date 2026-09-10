@@ -188,7 +188,7 @@ Sigma86 enforces strict quantitative risk trigger conditions. If market conditio
 │                              ON-CHAIN SIGMA86 VAULT                                  │
 │                                                                                      │
 │   ┌──────────────────────────────────────────────────────────────────────────────┐   │
-│   │ 1. HYPER-LATENCY YUL EXECUTION CORE                                          │   │
+│   │ 1. Gas-optimized YUL EXECUTION CORE                                          │   │
 │   │    Direct EVM call passing raw 1inch calldata to router with 0 memory copies │   │
 │   └──────────────────────────────────────┬───────────────────────────────────────┘   │
 │                                          │                                           │
@@ -212,7 +212,7 @@ Sigma86 enforces strict quantitative risk trigger conditions. If market conditio
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.1 Zero-Memory Yul Assembly Execution Core
+### 3.1 low-overhead Yul Assembly Execution Core
 `executeTick()` executes external router swaps using inline Yul assembly hardened against uninitialized scratch space:
 ```solidity
 assembly {
