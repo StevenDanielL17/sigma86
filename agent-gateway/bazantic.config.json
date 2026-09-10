@@ -17,7 +17,8 @@
     }
   },
   "mppGateway": {
-    "gatewayId": "gw_sigma86_ethonline2026",
+    "gatewayId": "zrjang77vreuxc673yf2efd7pe",
+    "gatewayUrl": "https://zrjang77vreuxc673yf2efd7pe.bazgateway.com",
     "authType": "x402-bearer",
     "rateLimits": {
       "requestsPerMinute": 120,
