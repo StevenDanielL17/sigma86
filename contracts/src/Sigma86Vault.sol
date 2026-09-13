@@ -123,21 +123,30 @@ contract Sigma86Vault is AutomationCompatibleInterface {
 
         // Institutional circuit breaker defaults
         maxConsecutiveFailures = 3;
-        timelockDelay = 0; // Default 0 for immediate Gnosis Safe multisig execution; configurable
+        timelockDelay = 2 days;
+        maxOracleDelay = 86400; // 24h default for testnets
     }
 
     /**
      * @notice Initializes the trading schedule
      * @param _tradeSizes Array of trade sizes to execute at each tick
      */
-    function startSchedule(uint256[] memory _tradeSizes) external onlyOwner inState(State.IDLE) {
-        require(_tradeSizes.length > 0, "Schedule cannot be empty");
+    function startSchedule(uint256[] calldata _tradeSizes) external onlyOwner inState(State.IDLE) {
+        require(_tradeSizes.length > 0, "Empty schedule");
         tradeSizes = _tradeSizes;
         currentTick = 0;
         failedAmount = 0;
         consecutiveFailures = 0;
         currentState = State.ACTIVE;
         emit ScheduleStarted();
+    }
+
+    /**
+     * @notice Approves a token for the router to pull during execution
+     */
+    function approveRouter(address token) external onlyOwner {
+        (bool success, ) = token.call(abi.encodeWithSignature("approve(address,uint256)", oneInchRouter, type(uint256).max));
+        require(success, "Approval failed");
     }
 
     /**
