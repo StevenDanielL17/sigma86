@@ -140,8 +140,10 @@ contract Sigma86VaultTest is Test {
 
         // Withdraw remaining tokens back to owner
         address recipient = address(42);
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vault.setTimelockDelay(0);
         vault.withdrawRemaining(address(token), recipient);
+        vm.stopPrank();
 
         // Confirm funds were transferred
         assertEq(token.balanceOf(recipient), vaultBalance);

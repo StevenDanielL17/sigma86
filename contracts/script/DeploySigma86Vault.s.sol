@@ -11,7 +11,7 @@ import "../src/Sigma86Vault.sol";
 contract DeploySigma86Vault is Script {
     struct NetworkConfig {
         address upkeepAgent;
-        address oneInchRouter;
+        address dexRouter;
         address priceFeed;
         uint256 maxSlippageBps;
         uint256 maxOracleDelay;
@@ -23,7 +23,7 @@ contract DeploySigma86Vault is Script {
         // 1. Ethereum Sepolia Testnet (ChainID: 11155111)
         if (chainId == 11155111) {
             config.upkeepAgent = vm.envOr("UPKEEP_AGENT", address(0x86EFBD0b6736Bed994962f9797049422A3A8E8Ad)); // Chainlink Automation 2.1 Registry
-            config.oneInchRouter = vm.envOr("ONE_INCH_ROUTER", address(0x111111125421cA6dc452d289314280a0f8842A65)); // 1inch v6 Router
+            config.dexRouter = vm.envOr("DEX_ROUTER", address(0x3BFA4769fe09E0000a231fED2D74d5300F793e94)); // Uniswap V3 Router Sepolia
             config.priceFeed = vm.envOr("PRICE_FEED", address(0x694AA1769357215DE4FAC081bf1f309aDC325306)); // Chainlink ETH/USD Sepolia
             config.maxSlippageBps = 100; // 1.00%
             config.maxOracleDelay = 86400; // 24h for testnet heartbeat variance
@@ -31,7 +31,7 @@ contract DeploySigma86Vault is Script {
         // 2. Arbitrum Sepolia Testnet (ChainID: 421614)
         else if (chainId == 421614) {
             config.upkeepAgent = vm.envOr("UPKEEP_AGENT", address(0x86EFBD0b6736Bed994962f9797049422A3A8E8Ad));
-            config.oneInchRouter = vm.envOr("ONE_INCH_ROUTER", address(0x111111125421cA6dc452d289314280a0f8842A65));
+            config.dexRouter = vm.envOr("DEX_ROUTER", address(0x2b800a854cdB1A7B7d4f997d292394f89D494943)); // Uniswap V3 Arb Sepolia
             config.priceFeed = vm.envOr("PRICE_FEED", address(0xd30e2101a97dcbAeBCBC04F14C3f624E67A35165)); // Chainlink ETH/USD Arb Sepolia
             config.maxSlippageBps = 100;
             config.maxOracleDelay = 86400;
@@ -39,7 +39,7 @@ contract DeploySigma86Vault is Script {
         // 3. Ethereum Mainnet (ChainID: 1)
         else if (chainId == 1) {
             config.upkeepAgent = vm.envOr("UPKEEP_AGENT", address(0x02777053d6764996e594c3E88AF1D58D5363a2e6)); // Automation Registry 2.1
-            config.oneInchRouter = vm.envOr("ONE_INCH_ROUTER", address(0x111111125421cA6dc452d289314280a0f8842A65)); // 1inch v6 Router
+            config.dexRouter = vm.envOr("DEX_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564)); // Uniswap V3 Mainnet
             config.priceFeed = vm.envOr("PRICE_FEED", address(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419)); // Chainlink ETH/USD Mainnet
             config.maxSlippageBps = 100;
             config.maxOracleDelay = 3600; // 1h mainnet heartbeat
@@ -47,7 +47,7 @@ contract DeploySigma86Vault is Script {
         // 4. Default / Local Anvil (ChainID: 31337 or others)
         else {
             config.upkeepAgent = vm.envOr("UPKEEP_AGENT", msg.sender);
-            config.oneInchRouter = vm.envOr("ONE_INCH_ROUTER", address(0x111111125421cA6dc452d289314280a0f8842A65));
+            config.dexRouter = vm.envOr("DEX_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564));
             config.priceFeed = vm.envOr("PRICE_FEED", address(0x694AA1769357215DE4FAC081bf1f309aDC325306));
             config.maxSlippageBps = 100;
             config.maxOracleDelay = 86400;
@@ -72,7 +72,7 @@ contract DeploySigma86Vault is Script {
         console.log("Deployer Address:    ", deployer);
         console.log("Chain ID:            ", block.chainid);
         console.log("Upkeep Agent:        ", config.upkeepAgent);
-        console.log("1inch Router:        ", config.oneInchRouter);
+        console.log("Uniswap V3 Router:   ", config.dexRouter);
         console.log("Price Feed:          ", config.priceFeed);
         console.log("Max Slippage:        ", config.maxSlippageBps, "bps");
         console.log("Max Oracle Delay:    ", config.maxOracleDelay, "seconds");
@@ -81,7 +81,7 @@ contract DeploySigma86Vault is Script {
 
         Sigma86Vault vault = new Sigma86Vault(
             config.upkeepAgent,
-            config.oneInchRouter,
+            config.dexRouter,
             config.priceFeed,
             config.maxSlippageBps
         );

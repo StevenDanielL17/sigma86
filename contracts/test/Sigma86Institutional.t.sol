@@ -520,8 +520,10 @@ contract Sigma86InstitutionalTest is Test {
         assertEq(uint256(vault.currentState()), uint256(Sigma86Vault.State.IDLE));
 
         // Owner can withdraw remaining funds in IDLE state without faking an abort
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vault.setTimelockDelay(0);
         vault.withdrawRemaining(address(token), treasuryRecipient);
+        vm.stopPrank();
 
         assertEq(token.balanceOf(treasuryRecipient), 1000e18);
         assertEq(token.balanceOf(address(vault)), 0);

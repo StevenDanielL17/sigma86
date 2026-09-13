@@ -192,8 +192,10 @@ contract Sigma86IntegrationTest is Test {
         assertTrue(remaining > 0, "Vault must hold remaining balance after near-complete abort");
 
         // Withdraw remaining to DAO treasury
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vault.setTimelockDelay(0);
         vault.withdrawRemaining(address(token), recipient);
+        vm.stopPrank();
 
         assertEq(token.balanceOf(address(vault)), 0, "Vault must be empty after withdraw");
         assertEq(token.balanceOf(recipient), remaining, "Recipient must receive full remaining balance");
