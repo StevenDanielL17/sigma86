@@ -76,13 +76,14 @@ contract ForkDemo is Script {
         console.log("STEP 1 DONE: Vault deployed at", address(vault));
 
         // ---- STEP 2: Seed vault with WETH and approve router ----
-        address wethWhale = 0x2F0b23f53734252Bda2277357e97e1517d6B042A;
-        vm.stopBroadcast();
-        vm.startPrank(wethWhale);
+        // Instead of pranking a whale (which isn't broadcasted to the fork),
+        // we use vm.deal to give the deployer ETH, then wrap it to WETH,
+        // and send it to the vault, all fully on-chain.
+        vm.deal(deployer, 10 ether);
+        (bool wethSuccess, ) = WETH.call{value: VAULT_SEED}(abi.encodeWithSignature("deposit()"));
+        require(wethSuccess, "WETH deposit failed");
         IERC20(WETH).transfer(address(vault), VAULT_SEED);
-        vm.stopPrank();
 
-        vm.startBroadcast(deployerKey);
         vault.approveRouter(WETH);
         console.log("STEP 2 DONE: Vault seeded and router approved.");
 
