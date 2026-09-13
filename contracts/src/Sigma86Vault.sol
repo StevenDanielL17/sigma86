@@ -218,7 +218,7 @@ contract Sigma86Vault is AutomationCompatibleInterface {
             
             // Clean scratch space to prevent reading uninitialized memory
             mstore(0x00, 0)
-            // Call 1inch router and write first 32 bytes of return data (returnAmount) to memory 0x00
+            // Call Uniswap V3 router and write first 32 bytes of return data (returnAmount) to memory 0x00
             success := call(gas(), router, 0, ptr, swapData.length, 0x00, 0x20)
             if and(success, iszero(lt(returndatasize(), 32))) {
                 returnAmount := mload(0x00)

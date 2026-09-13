@@ -1,1 +1,0 @@
-{"version":1,"failures":[{"contract":"test/Sigma86ExecuteTick.t.sol:Sigma86ExecuteTickTest","test":"testExecuteTickRevertsWhenScheduleCompleted"}]}

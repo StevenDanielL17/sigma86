@@ -57,9 +57,7 @@
 **Speaker:**
 > "An off-chain brain is useless if the smart contract can be manipulated or drained.
 > 
-> In `Sigma86Vault.sol`, we built an unassailable on-chain trust boundary. Our production code is designed to execute swaps via raw Yul assembly directly into the 1inch aggregation router, zeroing EVM scratch space to guarantee zero memory expansion overhead. 
->
-> *(Note for judges: For this demo video, because 1inch's API was unavailable behind a key, we routed the Vault directly through the Uniswap V3 Mainnet Router instead. This allows us to prove the execution and oracle logic against real mainnet liquidity today—but the production code targets 1inch.)*
+> In `Sigma86Vault.sol`, we built an unassailable on-chain trust boundary. Swaps are executed via raw Yul assembly directly into the Uniswap V3 Mainnet Router, zeroing EVM scratch space to guarantee zero memory expansion overhead. 
 > 
 > After every tick, the Vault cross-checks the realized execution price against live Chainlink Oracles. Because we set `amountOutMinimum: 0` at the DEX routing layer, we rely entirely on this atomic post-trade oracle check to catch bad fills. If slippage breaches the DAO's threshold, or if the oracle feed is stale, the transaction intentionally reverts entirely, providing absolute protection against sandwich attacks.
 > 
@@ -84,12 +82,12 @@
 ---
 
 ### [2:45 – 3:00] Part 5: The Bazantic Autonomous Agent Copilot
-**Visual Cue:** Run `npm run test:recipe`. The terminal displays the 4-step Bazantic Recipe: polling Chainlink, solving with Sigma86, fetching 1inch route, and verifying the on-chain trust boundary for Flashbots dispatch. Show the `bazantic.config.json` MPP gateway.
+**Visual Cue:** Run `npm run test:recipe`. The terminal displays the 4-step Bazantic Recipe: polling Chainlink, solving with Sigma86, fetching Uniswap V3 route, and verifying the on-chain trust boundary for Flashbots dispatch. Show the `bazantic.config.json` MPP gateway.
 
 **Speaker:**
 > "Finally, we exposed this solver as a Model Context Protocol server integrated into the **Bazantic Platform**.
 > 
-> Our **Institutional Treasury Copilot Recipe** autonomous chains Chainlink Data Feeds, Sigma86 Quant Math, 1inch Aggregation Routing, and Flashbots private mempool dispatch into a single click. **In this demo, Bazantic's agent plans the schedule and we simulate the end-to-end execution against a live Mainnet fork using Foundry.**
+> Our **Institutional Treasury Copilot Recipe** autonomous chains Chainlink Data Feeds, Sigma86 Quant Math, Uniswap V3 Routing, and Flashbots private mempool dispatch into a single click. **In this demo, Bazantic's agent plans the schedule and we simulate the end-to-end execution against a live Mainnet fork using Foundry.**
 > 
 > Institutional mathematics. On-chain trust boundaries. Autonomous end-to-end execution.
 > 

@@ -10,12 +10,12 @@ Sigma86 adapts **Almgren-Chriss (2000)** optimal execution model to Constant Pro
 
 ## 🏗️ Core Architecture
 
-1. **Quantitative Solver (gent-gateway):**
+1. **Quantitative Solver ( gent-gateway):**
    * Built in TypeScript, this MCP server ingests Chainlink historical volatility and the DAO's VaR budget to compute the optimal Almgren-Chriss fractional execution schedule.
-2. **Autonomous Execution (azanticRecipe.ts):**
-   * The Bazantic "Institutional Treasury Copilot" agent orchestrates the workflow: calculating the schedule, requesting quotes from the 1inch API, checking oracle bounds, and dispatching the transaction directly to Flashbots Protect RPC.
+2. **Autonomous Execution ( azanticRecipe.ts):**
+   * The Bazantic "Institutional Treasury Copilot" agent orchestrates the workflow: calculating the schedule, fetching liquidity routes from the Uniswap V3 Mainnet Router, checking oracle bounds, and dispatching the transaction directly to Flashbots Protect RPC.
 3. **On-Chain Trust Boundary (Sigma86Vault.sol):**
-   * **Gas-Optimized Yul Core:** Bypasses Solidity's ABI encoding overhead by copying 1inch router calldata directly to memory. Lowering the base gas footprint frees up budget for higher effective priority fees, maximizing top-of-block inclusion probability.
+   * **Gas-Optimized Yul Core:** Bypasses Solidity's ABI encoding overhead by copying Uniswap router calldata directly to memory. Lowering the base gas footprint frees up budget for higher effective priority fees, maximizing top-of-block inclusion probability.
    * **Oracle Circuit Breaker:** Validates realized execution price against live Chainlink data feeds. Reverts and pauses the schedule on consecutive slippage breaches.
    * **Self-Custodial:** Single-unwind proxy controlled exclusively by the DAO's dedicated treasury wallet (EOA or Multisig) with timelocked recovery functions.
 
